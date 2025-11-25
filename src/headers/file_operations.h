@@ -3,14 +3,15 @@
 
 #include "common.h"
 
-// Function declarations
-int create_file(const char *filename);
-int delete_file(const char *filename);
-int copy_file(const char *source, const char *destination);
-int move_file(const char *source, const char *destination);
-int rename_file(const char *old_name, const char *new_name);
-void display_file(const char *filename);
-int append_to_file(const char *filename, const char *content);
-int search_in_file(const char *filename, const char *pattern);
+// File operations
+int createFile(const char* name);
+int openFile(const char* name, int operation);
+int closeFile(int fd);
+int searchFile(const char* name);
+int renameFile(const char* oldName, const char* newName);
+int moveFile(const char* src, const char* dir);
+int writeFile(int fd, const char* data, int size);
+int readFile(int fd, char* buffer, int size);
+int deleteFile(const char* name);
 
 #endif
