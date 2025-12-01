@@ -76,25 +76,17 @@ int init_inodes(const char *filename){
 
 }
 
-typedef struct{
+struct DirectoryEntry_Struct; 
+
+typedef struct DirectoryEntry_Struct {
     uint16_t inode_number; //inode of entry
     uint8_t record_length; //total bytes for name + leftover space
     uint8_t str_length; //total bytes/char for name
+    uint8_t entries_length; //number of entries, once again for file is 0
+    struct DirectoryEntry_Struct **entries; //for file is 0
+    char *path; //pointer for path
     char name[]; //flexible array for name string, at most 256 char considering str_length
 }DirectoryEntry;
-
-typedef struct{
-    uint16_t inode_number; //inode of directory
-    uint8_t length; //number of entries
-    DirectoryEntry **entries; //pointer to array of pointers, because DirectoryEntries not contiguous
-    char *path; //pointer for path
-}Directory;
-
-int init_directory(const char *filename, Directory *dir){
-    //find free inode
-    //set dir.inode_number to free inode and change inode status to in use in bitmap
-    //initialize DirectoryEntry for . (this directory) and .. (parent directory)
-}
 
 //should not be called by itself, already called in create_root_directory()
 void init_root_inode(){
@@ -110,16 +102,16 @@ void init_root_inode(){
     in->mtime = time(NULL); //last modified
     in->dtime = 0; //file deletion time, not set
     in->flags = 2; //2 directory
-    memcpy(HARD_DISK[INODE_START], in, sizeof(Inode)); 
+    memcpy(HARD_DISK[INODE_START], in, sizeof(Inode)); //saved to hard disk array
 }
 
 //does both directory and inode, for now pases back directory*, maybe change to void
-Directory* create_root_directory(){
-    Directory *dir = malloc(sizeof(Directory));
+DirectoryEntry* create_root_directory(){
+    DirectoryEntry *dir = malloc(sizeof(DirectoryEntry));
     dir->inode_number = INODE_START; 
-    dir->length = 0;
+    dir->entries_length = 0;
     dir->path = malloc(sizeof(char)*2); // '/' and '\0' null terminator
-    dir->path = "/";
+    dir->name[0] = '/';
     dir->entries = NULL;
     init_root_inode();
     return dir;
@@ -152,14 +144,16 @@ void init_inode(uint16_t inode_number){
 
 void create_directory(const char *dirname)
 {
-    Directory *dir = malloc(sizeof(Directory));
+    DirectoryEntry *dir = malloc(sizeof(DirectoryEntry));
     dir->inode_number = find_free_inode(); // find free inode
-    dir->length = 0;
+    dir->entries_length = 0;
     dir->path = malloc(strlen(session_config->current_working_dir) + strlen(dirname) + 2);//2 for / and \0 null terminator
     if(snprintf(dir->path, MAX_PATH_LENGTH-1, "%s/%s", session_config->current_working_dir, dirname) > MAX_PATH_LENGTH)//size check
         printf("MAX_PATH_LENGTH exceeded\n");
     memcpy(session_config->current_working_dir, dir->path, strlen(dir->path) + 1); //update current working dir as well
     dir->entries = NULL;                                           // No entries initially
+    //change inode status to in use in bitmap
+    //initialize DirectoryEntry for . (this directory) and .. (parent directory)
 }
 
 int rmdir(const char *dirname){
@@ -274,7 +268,7 @@ int main(){
     //reset_HARD_DISK fills hard disk with 0s
     reset_hard_disk();
 
-    Directory *rootDirectory;
+    DirectoryEntry *rootDirectory;
     rootDirectory = create_root_directory();
     Inode rootInode;
     memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
@@ -286,7 +280,7 @@ int main(){
     printf("Printing Root Directory:\n");
     //printf("\tEntries: %s", rootDirectory->entries[0]); save this for later
     printf("\tInode Number Block: %d\n", rootDirectory->inode_number);
-    printf("\tLength: %d\n", rootDirectory->length);
+    printf("\tLength: %d\n", rootDirectory->entries_length);
     printf("\tPath: %s\n", rootDirectory->path);
     create_directory("home");
     printf("Current Working Directory: %s\n", session_config->current_working_dir);
