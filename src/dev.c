@@ -25,10 +25,13 @@
 
 typedef struct
 {
+    uint16_t uid; //current user id
     char current_working_dir[MAX_PATH_LENGTH];
-    int show_hidden_files;
-    int verbose_mode;
+    bool show_hidden_files;
+    bool verbose_mode;
 } SessionConfig;
+
+SessionConfig *session_config;
 
 //HARD DISK
 #define BLOCK_NUM 16384
@@ -43,26 +46,33 @@ typedef struct
 #define DATA_START 515 //start of data
 #define DATA_END 16384 //last block
 
+/*
+16 bits is enough for number of blocks 2^16=65536>16384, each block is 2KiB, 16384, 2048
+uint8_t, one byte is 8 bits
+*/
+uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES]; 
+
 //64 bytes
 typedef struct{
 
     uint16_t ownerID;
     uint16_t permissions; //0000000rwxrwxrwx, owner, group, other/world, 0 would be -/no and 1 would be yes
     uint32_t file_size; //in bytes
-    uint16_t directBlocks[16]; //this can be reduced for more metadata options
-    uint16_t indirect;
-    uint16_t second_level_indirect;
-    uint32_t time; //last accessed
-    uint32_t ctime; //creation time
-    uint32_t mtime; //last modified
-    uint32_t dtime; //file deletion time
+    uint16_t directBlocks[6]; //this can be reduced for more metadata options
+    uint16_t indirect; //0 means uninitialized
+    uint16_t second_level_indirect; //0 means uninitialized
+    //we're okay that it isn't 2038 yet to store time in 32 bits
+    time_t time; //last accessed
+    time_t ctime; //creation time
+    time_t mtime; //last modified
+    time_t dtime; //file deletion time
     uint32_t flags; //1 regular file, 2 directory, 4 indirect block, 8 second_level_indirect block, etc.
 
 
 } Inode;
 static_assert(sizeof(Inode) == 64, "Inode must be 64 bytes in size");
 
-int init_inode(const char *filename){
+int init_inodes(const char *filename){
 
 }
 
@@ -77,6 +87,7 @@ typedef struct{
     uint16_t inode_number; //inode of directory
     uint8_t length; //number of entries
     DirectoryEntry **entries; //pointer to array of pointers, because DirectoryEntries not contiguous
+    char *path; //pointer for path
 }Directory;
 
 int init_directory(const char *filename, Directory *dir){
@@ -84,8 +95,87 @@ int init_directory(const char *filename, Directory *dir){
     //set dir.inode_number to free inode and change inode status to in use in bitmap
     //initialize DirectoryEntry for . (this directory) and .. (parent directory)
 }
-int delete_file(const char *filename){
 
+//should not be called by itself, already called in create_root_directory()
+void init_root_inode(){
+    Inode* in = malloc(sizeof(Inode));
+    in->ownerID = session_config->uid; //set creator/owner to current session user
+    in->permissions = 420; //0000000rw-r--r--, owner, group, other/world i.e. 4+32+128+256=420
+    in->file_size = 0; //in bytes
+    in->directBlocks[0] = ROOT_DIRECTORY; //initialize first block
+    in->indirect = 0;
+    in->second_level_indirect = 0;
+    in->time = time(NULL); //last accessed, since unix epoch
+    in->ctime = time(NULL); //creation time
+    in->mtime = time(NULL); //last modified
+    in->dtime = 0; //file deletion time, not set
+    in->flags = 2; //2 directory
+    memcpy(HARD_DISK[INODE_START], in, sizeof(Inode)); 
+}
+
+//does both directory and inode, for now pases back directory*, maybe change to void
+Directory* create_root_directory(){
+    Directory *dir = malloc(sizeof(Directory));
+    dir->inode_number = INODE_START; 
+    dir->length = 0;
+    dir->path = malloc(sizeof(char)*2); // '/' and '\0' null terminator
+    dir->path = "/";
+    dir->entries = NULL;
+    init_root_inode();
+    return dir;
+}
+
+int find_free_data_block(){
+
+}
+
+int find_free_inode(){
+
+}
+
+//should not be called by itself, already called in create_directory()
+void init_inode(uint16_t inode_number){
+    Inode* in = malloc(sizeof(Inode));
+    in->ownerID = session_config->uid; //set creator/owner to current session user
+    in->permissions = 420; //0000000rw-r--r--, owner, group, other/world i.e. 4+32+128+256=420
+    in->file_size = 0; //in bytes
+    in->directBlocks[0] = find_free_data_block(); //initialize first block
+    in->indirect = 0;
+    in->second_level_indirect = 0;
+    in->time = time(NULL); //last accessed, since unix epoch
+    in->ctime = time(NULL); //creation time
+    in->mtime = time(NULL); //last modified
+    in->dtime = 0; //file deletion time, not set
+    in->flags = 2; //2 directory
+    memcpy(HARD_DISK[INODE_START], in, sizeof(Inode)); 
+}
+
+void create_directory(const char *dirname)
+{
+    Directory *dir = malloc(sizeof(Directory));
+    dir->inode_number = find_free_inode(); // find free inode
+    dir->length = 0;
+    dir->path = malloc(strlen(session_config->current_working_dir) + strlen(dirname) + 2);//2 for / and \0 null terminator
+    if(snprintf(dir->path, MAX_PATH_LENGTH-1, "%s/%s", session_config->current_working_dir, dirname) > MAX_PATH_LENGTH)//size check
+        printf("MAX_PATH_LENGTH exceeded\n");
+    memcpy(session_config->current_working_dir, dir->path, strlen(dir->path) + 1); //update current working dir as well
+    dir->entries = NULL;                                           // No entries initially
+}
+
+int rmdir(const char *dirname){
+
+}
+
+void delete_directory_helper(const char *dirname)
+{
+    if (rmdir(dirname) == -1)
+    {
+        perror("rmdir");
+        exit(EXIT_FAILURE);
+    }
+}
+
+int delete_file(const char *filename){
 }
 
 typedef enum {
@@ -139,11 +229,7 @@ How can a file system accomplish any of this with reasonable efficiency?
     */
 }
 
-/*
-16 bits is enough for number of blocks 2^16=65536>16384, each block is 2KiB, 16384, 2048
-uint8_t, one byte is 8 bits
-*/
-uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES]; 
+
 //creating the free bit map/array
 
 //reset_HARD_DISK fills hard disk with 0s
@@ -170,7 +256,9 @@ int print_hard_disk_ascii(int start_block, int end_block){
     return 0;
 }
 int main(){
-	
+    session_config = (SessionConfig*)malloc(sizeof(SessionConfig));
+	session_config->uid = 0;
+
     printf("Number of blocks is %d\n", BLOCK_NUM);
     printf("Size of Block is %d bytes\n", BLOCK_SIZE_BYTES);
 	printf("Size of Inode is %ld bytes\n", sizeof(Inode)); //64
@@ -182,9 +270,26 @@ int main(){
     //48 is the ASCII charcter 0 to see for printing 
     memset(HARD_DISK, 48, sizeof(HARD_DISK));
     //prints first block
-    print_hard_disk_ascii(0, 1); //printed 2048 0s
+    //print_hard_disk_ascii(0, 1); //printed 2048 0s
     //reset_HARD_DISK fills hard disk with 0s
     reset_hard_disk();
-    return 0;
+
+    Directory *rootDirectory;
+    rootDirectory = create_root_directory();
+    Inode rootInode;
+    memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
+    printf("Printing Root Inode:\n");
+    printf("\tCreation Time: %s", ctime(&rootInode.ctime));
+    printf("\tStarting Block: %d\n", rootInode.directBlocks[0]);
+    printf("\tPermissions: %o\n", rootInode.permissions);
+    printf("\tOwner/User ID: %d\n", rootInode.ownerID);
+    printf("Printing Root Directory:\n");
+    //printf("\tEntries: %s", rootDirectory->entries[0]); save this for later
+    printf("\tInode Number Block: %d\n", rootDirectory->inode_number);
+    printf("\tLength: %d\n", rootDirectory->length);
+    printf("\tPath: %s\n", rootDirectory->path);
+    create_directory("home");
+    printf("Current Working Directory: %s\n", session_config->current_working_dir);
+    return 0; 
 	
 }
