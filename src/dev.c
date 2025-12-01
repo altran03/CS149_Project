@@ -90,6 +90,12 @@ typedef struct{
     char *path; //pointer for path
 }Directory;
 
+typedef struct{
+    uint16_t inode_number; //inode of file
+    char *path; //pointer for path
+    uint32_t file_size; //current file size in bytes
+}File;
+
 int init_directory(const char *filename, Directory *dir){
     //find free inode
     //set dir.inode_number to free inode and change inode status to in use in bitmap
@@ -126,11 +132,17 @@ Directory* create_root_directory(){
 }
 
 int find_free_data_block(){
-
+    // TODO: Implement bitmap-based data block allocation
+    // This should check the data bitmap (block FREE_BITMAP) to find a free data block
+    // Return the block number of a free data block, or 0 if none available
+    return 0;
 }
 
 int find_free_inode(){
-
+    // TODO: Implement bitmap-based inode allocation
+    // This should check the inode bitmap (block FREE_BITMAP) to find a free inode
+    // Return the inode number of a free inode, or 0 if none available
+    return 0;
 }
 
 //should not be called by itself, already called in create_directory()
@@ -140,6 +152,9 @@ void init_inode(uint16_t inode_number){
     in->permissions = 420; //0000000rw-r--r--, owner, group, other/world i.e. 4+32+128+256=420
     in->file_size = 0; //in bytes
     in->directBlocks[0] = find_free_data_block(); //initialize first block
+    for(int i = 1; i < 6; i++){
+        in->directBlocks[i] = 0; //initialize remaining direct blocks to 0
+    }
     in->indirect = 0;
     in->second_level_indirect = 0;
     in->time = time(NULL); //last accessed, since unix epoch
@@ -147,7 +162,14 @@ void init_inode(uint16_t inode_number){
     in->mtime = time(NULL); //last modified
     in->dtime = 0; //file deletion time, not set
     in->flags = 2; //2 directory
-    memcpy(HARD_DISK[INODE_START], in, sizeof(Inode)); 
+    
+    // Calculate which block contains this inode and offset within that block
+    // Each inode is 64 bytes, each block is 2048 bytes, so 32 inodes per block
+    uint16_t inode_block = INODE_START + (inode_number / 32);
+    uint16_t inode_offset = (inode_number % 32) * sizeof(Inode);
+    
+    memcpy(HARD_DISK[inode_block] + inode_offset, in, sizeof(Inode));
+    free(in);
 }
 
 void create_directory(const char *dirname)
@@ -173,6 +195,94 @@ void delete_directory_helper(const char *dirname)
         perror("rmdir");
         exit(EXIT_FAILURE);
     }
+}
+
+//should not be called by itself, already called in create_file()
+void init_file_inode(uint16_t inode_number){
+    Inode* in = malloc(sizeof(Inode));
+    in->ownerID = session_config->uid; //set creator/owner to current session user
+    in->permissions = 420; //0000000rw-r--r--, owner, group, other/world i.e. 4+32+128+256=420
+    in->file_size = 0; //in bytes, empty file initially
+    in->directBlocks[0] = find_free_data_block(); //initialize first block
+    for(int i = 1; i < 6; i++){
+        in->directBlocks[i] = 0; //initialize remaining direct blocks to 0
+    }
+    in->indirect = 0;
+    in->second_level_indirect = 0;
+    in->time = time(NULL); //last accessed, since unix epoch
+    in->ctime = time(NULL); //creation time
+    in->mtime = time(NULL); //last modified
+    in->dtime = 0; //file deletion time, not set
+    in->flags = 1; //1 regular file (not directory)
+    
+    // Calculate which block contains this inode and offset within that block
+    // Each inode is 64 bytes, each block is 2048 bytes, so 32 inodes per block
+    uint16_t inode_block = INODE_START + (inode_number / 32);
+    uint16_t inode_offset = (inode_number % 32) * sizeof(Inode);
+    
+    memcpy(HARD_DISK[inode_block] + inode_offset, in, sizeof(Inode));
+    free(in);
+}
+
+int create_file(const char *filename){
+    // Validate input
+    if(filename == NULL || strlen(filename) == 0){
+        return ERROR_INVALID_INPUT;
+    }
+    
+    if(strlen(filename) > MAX_FILENAME){
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // Find a free inode for the new file
+    uint16_t free_inode = find_free_inode();
+    if(free_inode == 0){
+        // Assuming find_free_inode returns 0 when no free inode is found
+        return ERROR_FILE_NOT_FOUND; // Or we could define a new error code like ERROR_NO_FREE_INODE
+    }
+    
+    // Initialize the inode for the file
+    init_file_inode(free_inode);
+    
+    // Create File struct (similar to Directory)
+    File *file = malloc(sizeof(File));
+    if(file == NULL){
+        return ERROR_INVALID_INPUT; // Memory allocation failed
+    }
+    file->inode_number = free_inode;
+    file->file_size = 0;
+    
+    // Allocate and set the path
+    size_t path_len = strlen(session_config->current_working_dir) + strlen(filename) + 2; //2 for / and \0
+    file->path = malloc(path_len);
+    if(file->path == NULL){
+        free(file);
+        return ERROR_INVALID_INPUT; // Memory allocation failed
+    }
+    
+    if(snprintf(file->path, path_len, "%s/%s", session_config->current_working_dir, filename) >= (int)path_len){
+        printf("MAX_PATH_LENGTH exceeded\n");
+        free(file->path);
+        free(file);
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // TODO: Add DirectoryEntry to current directory
+    // 1. Reading the current directory's inode
+    // 2. Reading the directory's data block(s)
+    // 3. Creating a new DirectoryEntry with the filename and inode number
+    // 4. Adding it to the directory entries
+    // 5. Updating the directory's inode
+    
+    // For now, we've created the file's inode and File struct
+    // The directory entry addition can be implemented later when directory operations are complete
+    
+    // Note: File struct should be managed by the caller
+    // or stored in a file table, freeing it for now
+    free(file->path);
+    free(file);
+    
+    return SUCCESS;
 }
 
 int delete_file(const char *filename){
@@ -258,6 +368,7 @@ int print_hard_disk_ascii(int start_block, int end_block){
 int main(){
     session_config = (SessionConfig*)malloc(sizeof(SessionConfig));
 	session_config->uid = 0;
+    strcpy(session_config->current_working_dir, "/"); // Initialize current working directory
 
     printf("Number of blocks is %d\n", BLOCK_NUM);
     printf("Size of Block is %d bytes\n", BLOCK_SIZE_BYTES);
