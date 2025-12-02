@@ -39,6 +39,12 @@ void set_bit(uint8_t *bitmap, uint16_t index)
     bitmap[byte_index] |= (1 << bit_index);
 }
 
+/**
+ * Clear a specific bit in a bitmap.
+ *
+ * @param bitmap Pointer to the bitmap byte array.
+ * @param index Index of the bit to clear, where index 0 is the least-significant bit of byte 0.
+ */
 void clear_bit(uint8_t *bitmap, uint16_t index)
 {
     uint16_t byte_index = index / 8;
@@ -46,18 +52,33 @@ void clear_bit(uint8_t *bitmap, uint16_t index)
     bitmap[byte_index] &= ~(1 << bit_index);
 }
 
-// Get pointer to inode bitmap in hard disk (block FREE_INODE_BITMAP = 1)
+/**
+ * Get a pointer to the inode allocation bitmap.
+ *
+ * @return Pointer to the first byte of the inode bitmap stored in HARD_DISK at block FREE_INODE_BITMAP.
+ */
 uint8_t* get_inode_bitmap()
 {
     return HARD_DISK[FREE_INODE_BITMAP];
 }
 
-// Get pointer to data bitmap in hard disk (block FREE_DATA_BITMAP = 2)
+/**
+ * Obtain a pointer to the data-block allocation bitmap on the simulated disk.
+ *
+ * @returns Pointer to the first byte of the data bitmap stored at block `FREE_DATA_BITMAP` within `HARD_DISK`.
+ */
 uint8_t* get_data_bitmap()
 {
     return HARD_DISK[FREE_DATA_BITMAP];
 }
 
+/**
+ * Finds and allocates the next available inode starting after the reserved inode 0.
+ *
+ * Marks the inode's bit in the inode bitmap as allocated when found.
+ *
+ * @returns the index of the allocated inode (>= INODE_OFFSET), or 0 if no free inode is available.
+ */
 uint16_t find_free_inode()
 {
     uint8_t *inode_bitmap = get_inode_bitmap();
@@ -73,6 +94,14 @@ uint16_t find_free_inode()
     return 0; // 0 indicates no free inodes (since inode 0 is reserved)
 }
 
+/**
+ * Locate and allocate the next free data block.
+ *
+ * Searches the data bitmap from DATA_START (inclusive) to DATA_END (exclusive); when a free
+ * block is found the corresponding bit is set to mark allocation and the block index is returned.
+ *
+ * @returns Index of the allocated data block, or 0 if no free data block is available (0 is reserved).
+ */
 uint16_t find_free_data_block()
 {
     uint8_t *data_bitmap = get_data_bitmap();
@@ -88,6 +117,11 @@ uint16_t find_free_data_block()
     return 0; // 0 indicates no free data blocks (since inode 0 is reserved)
 }
 
+/**
+ * Mark the specified inode as free in the inode bitmap.
+ *
+ * @param inode_number Inode index to free; inode 0 is reserved and will not be freed.
+ */
 void free_inode(uint16_t inode_number)
 {
     if (inode_number == 0) return; // Don't free reserved inode 0
