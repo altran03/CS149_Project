@@ -41,11 +41,12 @@ typedef struct
 
 // Reserved Block Numbers
 #define SUPERBLOCK 0
-#define FREE_BITMAP 1
-#define INODE_START 2 // 512 Inode blocks for each block, each Inode block has 32 Inodes, in total 2^14 inodes, one for each block
-#define INODE_END 513
-#define ROOT_DIRECTORY 514
-#define DATA_START 515 // start of data
+#define FREE_INODE_BITMAP 1
+#define FREE_DATA_BITMAP 2
+#define INODE_START 3 // 512 Inode blocks for each block, each Inode block has 32 Inodes, in total 2^14 inodes, one for each block
+#define INODE_END 514
+#define ROOT_DIRECTORY 515
+#define DATA_START 516 // start of data
 #define DATA_END 16384 // last block
 
 // 64 bytes
