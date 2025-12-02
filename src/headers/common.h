@@ -46,7 +46,9 @@ typedef struct
 #define INODE_START 3 // 512 Inode blocks for each block, each Inode block has 32 Inodes, in total 2^14 inodes, one for each block
 #define INODE_END 514
 #define ROOT_DIRECTORY 515
-#define DATA_START 516 // start of data
+#define KERNEL_MEMORY_START 516 //stores FileDescriptors
+#define KERNEL_MEMORY_END 532
+#define DATA_START 533 // start of data
 #define DATA_END 16384 // last block
 
 // 64 bytes
@@ -90,7 +92,8 @@ typedef struct {
     uint16_t inode_number;
     uint16_t offset; //in bytes for block, max should be 2048
     uint16_t flags; //file operation that will be compared with inode permissions
-    uint8_t referenceCount; //number of concurrent references, 128 max can be increased if necessary
+    uint16_t referenceCount; //number of concurrent references, 128 max can be increased if necessary
 } FileDescriptor;
+static_assert(sizeof(FileDescriptor) == 64, "FileDescriptor must be 64 bytes in size");
 
 #endif

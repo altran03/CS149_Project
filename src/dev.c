@@ -284,8 +284,15 @@ int delete_file(const char *filename)
 int fs_open(const char *pathname, uint16_t operation)
 {
     char* dirEntry;
+    Inode rootInode;
+    memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
+    DirectoryEntry *entry = (DirectoryEntry *)HARD_DISK[ROOT_DIRECTORY];
+
     //split pathname by /
     dirEntry = strtok(pathname, s);
+    while(dirEntry != NULL) {
+
+    }
     //iterate through array (DirectoryEntry names)
         //iterate through names.entries until find next array element
     //once at last do things
