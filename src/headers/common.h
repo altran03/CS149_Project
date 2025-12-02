@@ -31,6 +31,7 @@ typedef struct
 {
     uint16_t uid; // current user id
     char current_working_dir[MAX_PATH_LENGTH];
+    uint16_t current_dir_inode; // inode number of current working directory (0 for root)
     bool show_hidden_files;
     bool verbose_mode;
 } SessionConfig;

@@ -54,7 +54,7 @@ void create_root_directory(){
     
     // Create . entry (points to root inode)
     DirectoryEntry *dot_entry = (DirectoryEntry *)(root_data_block + offset);
-    dot_entry->inode_number = INODE_START; // Root inode
+    dot_entry->inode_number = 0; // Root inode number (stored at block INODE_START)
     dot_entry->name_length = 1;
     dot_entry->name[0] = '.';
     dot_entry->name[1] = '\0';
@@ -63,7 +63,7 @@ void create_root_directory(){
     
     // Create .. entry (also points to root inode since root is its own parent)
     DirectoryEntry *dotdot_entry = (DirectoryEntry *)(root_data_block + offset);
-    dotdot_entry->inode_number = INODE_START;
+    dotdot_entry->inode_number = 0; // Root inode number (root is its own parent)
     dotdot_entry->name_length = 2;
     dotdot_entry->name[0] = '.';
     dotdot_entry->name[1] = '.';
@@ -142,10 +142,9 @@ uint16_t create_directory(const char *dirname)
     offset += dot_entry->record_length;
     
     // Create .. entry (points to parent directory's inode)
-    // TODO: Get parent directory's inode number from current working directory
-    // For now, assuming parent is root (INODE_START)
+    // Use current_dir_inode from session_config as the parent
     DirectoryEntry *dotdot_entry = (DirectoryEntry *)(dir_data + offset);
-    dotdot_entry->inode_number = session_config->current_working_dir.inode; // TODO: Get actual parent inode
+    dotdot_entry->inode_number = session_config->current_dir_inode; // Parent directory's inode
     dotdot_entry->name_length = 2;
     dotdot_entry->name[0] = '.';
     dotdot_entry->name[1] = '.';
@@ -284,15 +283,11 @@ int delete_file(const char *filename)
 int fs_open(const char *pathname, uint16_t operation)
 {
     char* dirEntry;
-    Inode rootInode;
-    memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
-    DirectoryEntry *entry = (DirectoryEntry *)HARD_DISK[ROOT_DIRECTORY];
-
-    //split pathname by /
-    dirEntry = strtok(pathname, s);
-    while(dirEntry != NULL) {
-
-    }
+    //split pathname by / (need to copy since strtok modifies the string)
+    char path_copy[MAX_PATH_LENGTH];
+    strncpy(path_copy, pathname, MAX_PATH_LENGTH - 1);
+    path_copy[MAX_PATH_LENGTH - 1] = '\0';
+    dirEntry = strtok(path_copy, "/");
     //iterate through array (DirectoryEntry names)
         //iterate through names.entries until find next array element
     //once at last do things
@@ -388,6 +383,7 @@ int main()
     session_config = (SessionConfig *)malloc(sizeof(SessionConfig));
     session_config->uid = 0;
     strcpy(session_config->current_working_dir, "/"); // Initialize current working directory
+    session_config->current_dir_inode = 0; // Root directory inode number
 
     printf("Number of blocks is %d\n", BLOCK_NUM);
     printf("Size of Block is %d bytes\n", BLOCK_SIZE_BYTES);
@@ -421,13 +417,14 @@ int main()
     uint16_t home_inode = create_directory("home");
     if (home_inode != 0) {
         printf("Created directory 'home' with inode: %d\n", home_inode);
+        // Get the home directory's inode to access its data block
+        Inode *home_inode_ptr = (Inode *)(HARD_DISK[INODE_START + (home_inode / 32)] + (home_inode % 32) * sizeof(Inode));
+        DirectoryEntry *homeDir = (DirectoryEntry *)HARD_DISK[home_inode_ptr->directBlocks[0]];
+        printf("\tEntry 1 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
+        DirectoryEntry *homeDir2 = (DirectoryEntry *)((uint8_t *)homeDir + homeDir->record_length);
+        printf("\tEntry 2 - Inode: %d, Name: %.*s\n", homeDir2->inode_number, homeDir2->name_length, homeDir2->name);
     } else {
         printf("Failed to create directory 'home'\n");
     }
-    DirectoryEntry *homeDir = (DirectoryEntry *)HARD_DISK[home_inode.directBlocks[0]];
-    printf("\tEntry 1 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
-    entry = (DirectoryEntry *)((uint8_t *)entry + homeDir->record_length);
-    printf("\tEntry 2 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
-    printf()
     return 0;
 }

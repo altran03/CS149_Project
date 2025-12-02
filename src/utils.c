@@ -76,16 +76,16 @@ uint16_t find_free_inode()
 uint16_t find_free_data_block()
 {
     uint8_t *data_bitmap = get_data_bitmap();
-    // Start from first non-reserved inode
-    for (uint16_t i = DATA_START; i < DATA_END; i++)
+    // Bitmap index 0 corresponds to block DATA_START, index 1 to DATA_START+1, etc.
+    for (uint16_t i = 0; i < MAX_DATA_BLOCKS; i++)
     {
         if (!is_bit_set(data_bitmap, i))
         {
             set_bit(data_bitmap, i); // Mark as allocated
-            return i;
+            return DATA_START + i; // Map bitmap index to actual block number
         }
     }
-    return 0; // 0 indicates no free data blocks (since inode 0 is reserved)
+    return 0; // 0 indicates no free data blocks
 }
 
 void free_inode(uint16_t inode_number)
@@ -98,6 +98,9 @@ void free_inode(uint16_t inode_number)
 void free_data_block(uint16_t block_number)
 {
     if (block_number < DATA_START || block_number > DATA_END) return;
+    uint8_t *data_bitmap = get_data_bitmap();
+    uint16_t bitmap_index = block_number - DATA_START; // Map block number to bitmap index
+    clear_bit(data_bitmap, bitmap_index); // Clear bitmap bit
     // Clear the block by zeroing it out
     memset(HARD_DISK[block_number], 0, BLOCK_SIZE_BYTES);
 }
