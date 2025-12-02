@@ -10,5 +10,5 @@ the scripts directory is for any .sh script files we may need to run
 in the docs folder is where this readme and any other documentation can be written
 
 Running:
-   gcc src/dev.c src/utils.c -I src/headers -o src/filesystem
-    ./src/filesystem
+   gcc src/dev.c src/utils.c -I src/headers -o filesystem
+   ./filesystem

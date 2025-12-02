@@ -27,6 +27,13 @@
 #define ERROR_PERMISSION_DENIED -2
 #define ERROR_INVALID_INPUT -3
 
+// File operation flags (similar to POSIX)
+#define O_RDONLY 0x0001  // Read only
+#define O_WRONLY 0x0002  // Write only
+#define O_RDWR   0x0004  // Read and write
+#define O_CREAT  0x0008  // Create if not exists
+#define O_TRUNC  0x0010  // Truncate file
+
 typedef struct
 {
     uint16_t uid; // current user id
@@ -94,6 +101,7 @@ typedef struct {
     uint16_t offset; //in bytes for block, max should be 2048
     uint16_t flags; //file operation that will be compared with inode permissions
     uint16_t referenceCount; //number of concurrent references, 128 max can be increased if necessary
+    uint8_t padding[56]; // Padding to make struct 64 bytes total (8 + 56 = 64)
 } FileDescriptor;
 static_assert(sizeof(FileDescriptor) == 64, "FileDescriptor must be 64 bytes in size");
 

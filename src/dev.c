@@ -155,8 +155,14 @@ uint16_t create_directory(const char *dirname)
     // Update directory inode file_size
     dir_inode->file_size = offset;
     
-    // TODO: Add entry to parent directory's data block
-    // This requires reading parent directory, finding space, adding entry
+    // Add entry to parent directory's data block
+    int result = add_directory_entry(session_config->current_dir_inode, dirname, new_inode_num);
+    if (result != SUCCESS) {
+        // Failed to add directory entry, clean up
+        free_inode(new_inode_num);
+        free_data_block(dir_data_block);
+        return 0; // Return 0 on error
+    }
     
     return new_inode_num;
 }
@@ -174,6 +180,135 @@ void delete_directory_helper(const char *dirname)
         perror("rmdir");
         exit(EXIT_FAILURE);
     }
+}
+
+// Helper function: Get directory entry at a specific offset
+DirectoryEntry* get_directory_entry_at_offset(uint8_t *dir_data, uint16_t offset)
+{
+    return (DirectoryEntry *)(dir_data + offset);
+}
+
+// Helper function: Get the offset of the next directory entry
+uint16_t get_next_directory_entry_offset(uint8_t *dir_data, uint16_t current_offset, uint16_t dir_size)
+{
+    if (current_offset >= dir_size) {
+        return dir_size; // Reached end
+    }
+    DirectoryEntry *entry = get_directory_entry_at_offset(dir_data, current_offset);
+    uint16_t next_offset = current_offset + entry->record_length;
+    return (next_offset > dir_size) ? dir_size : next_offset;
+}
+
+// Helper function: Find a directory entry by name in a directory
+// Returns the inode number if found, 0 if not found
+uint16_t find_directory_entry(uint16_t dir_inode, const char *name)
+{
+    if (name == NULL || strlen(name) == 0) {
+        return 0;
+    }
+    
+    // Get the directory's inode
+    uint16_t inode_block = INODE_START + (dir_inode / 32);
+    uint16_t inode_offset = (dir_inode % 32) * sizeof(Inode);
+    Inode *dir_inode_ptr = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    // Check if it's actually a directory
+    if ((dir_inode_ptr->flags & 2) == 0) {
+        return 0; // Not a directory
+    }
+    
+    // Get the directory's first data block
+    uint16_t dir_data_block = dir_inode_ptr->directBlocks[0];
+    if (dir_data_block == 0) {
+        return 0; // No data block
+    }
+    
+    uint8_t *dir_data = HARD_DISK[dir_data_block];
+    uint16_t dir_size = dir_inode_ptr->file_size;
+    uint16_t offset = 0;
+    
+    // Iterate through directory entries
+    while (offset < dir_size) {
+        DirectoryEntry *entry = get_directory_entry_at_offset(dir_data, offset);
+        
+        // Skip . and .. entries
+        if (entry->name_length > 0 && 
+            !(entry->name_length == 1 && entry->name[0] == '.') &&
+            !(entry->name_length == 2 && entry->name[0] == '.' && entry->name[1] == '.')) {
+            
+            // Compare names
+            if (entry->name_length == strlen(name) && 
+                strncmp(entry->name, name, entry->name_length) == 0) {
+                return entry->inode_number;
+            }
+        }
+        
+        // Move to next entry
+        offset = get_next_directory_entry_offset(dir_data, offset, dir_size);
+    }
+    
+    return 0; // Not found
+}
+
+// Helper function: Add a directory entry to a directory's data block
+// Returns SUCCESS on success, error code on failure
+int add_directory_entry(uint16_t dir_inode, const char *name, uint16_t target_inode)
+{
+    if (name == NULL || strlen(name) == 0 || strlen(name) > MAX_FILENAME) {
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // Check if entry already exists
+    if (find_directory_entry(dir_inode, name) != 0) {
+        return ERROR_INVALID_INPUT; // Entry already exists
+    }
+    
+    // Get the directory's inode
+    uint16_t inode_block = INODE_START + (dir_inode / 32);
+    uint16_t inode_offset = (dir_inode % 32) * sizeof(Inode);
+    Inode *dir_inode_ptr = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    // Check if it's actually a directory
+    if ((dir_inode_ptr->flags & 2) == 0) {
+        return ERROR_INVALID_INPUT; // Not a directory
+    }
+    
+    // Get the directory's first data block
+    uint16_t dir_data_block = dir_inode_ptr->directBlocks[0];
+    if (dir_data_block == 0) {
+        return ERROR_INVALID_INPUT; // No data block
+    }
+    
+    uint8_t *dir_data = HARD_DISK[dir_data_block];
+    uint16_t current_size = dir_inode_ptr->file_size;
+    
+    // Check if we have space (each block is 2048 bytes)
+    uint16_t name_len = strlen(name);
+    uint16_t entry_size = sizeof(DirectoryEntry) + name_len + 1; // +1 for null terminator
+    
+    if (current_size + entry_size > BLOCK_SIZE_BYTES) {
+        // TODO: Handle case where we need to allocate another block
+        return ERROR_INVALID_INPUT; // Not enough space in current block
+    }
+    
+    // Create the new directory entry at the end
+    DirectoryEntry *new_entry = (DirectoryEntry *)(dir_data + current_size);
+    new_entry->inode_number = target_inode;
+    new_entry->name_length = name_len;
+    new_entry->record_length = entry_size;
+    
+    // Copy the name (including null terminator)
+    memcpy(new_entry->name, name, name_len);
+    new_entry->name[name_len] = '\0';
+    
+    // Update directory inode's file_size
+    dir_inode_ptr->file_size = current_size + entry_size;
+    dir_inode_ptr->mtime = time(NULL); // Update modification time
+    
+    // Write back the updated inode
+    memcpy(HARD_DISK[inode_block] + inode_offset, dir_inode_ptr, sizeof(Inode));
+    
+    return SUCCESS;
 }
 
 // should not be called by itself, already called in create_file()
@@ -219,15 +354,15 @@ int create_file(const char *filename)
     }
 
     // Find a free inode for the new file
-    uint16_t free_inode = find_free_inode();
-    if (free_inode == 0)
+    uint16_t new_file_inode = find_free_inode();
+    if (new_file_inode == 0)
     {
         // Assuming find_free_inode returns 0 when no free inode is found
         return ERROR_FILE_NOT_FOUND; // Or we could define a new error code like ERROR_NO_FREE_INODE
     }
 
     // Initialize the inode for the file
-    init_file_inode(free_inode);
+    init_file_inode(new_file_inode);
 
     // Create File struct (similar to Directory)
     File *file = malloc(sizeof(File));
@@ -235,7 +370,7 @@ int create_file(const char *filename)
     {
         return ERROR_INVALID_INPUT; // Memory allocation failed
     }
-    file->inode_number = free_inode;
+    file->inode_number = new_file_inode;
     file->file_size = 0;
 
     // Allocate and set the path
@@ -255,15 +390,40 @@ int create_file(const char *filename)
         return ERROR_INVALID_INPUT;
     }
 
-    // TODO: Add DirectoryEntry to current directory
-    // 1. Reading the current directory's inode
-    // 2. Reading the directory's data block(s)
-    // 3. Creating a new DirectoryEntry with the filename and inode number
-    // 4. Adding it to the directory entries
-    // 5. Updating the directory's inode
+    // Check if file already exists in current directory
+    if (find_directory_entry(session_config->current_dir_inode, filename) != 0) {
+        // File already exists, clean up and return error
+        // Get the inode to find the data block before freeing
+        uint16_t inode_block = INODE_START + (new_file_inode / 32);
+        uint16_t inode_offset = (new_file_inode % 32) * sizeof(Inode);
+        Inode *temp_inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+        uint16_t data_block = temp_inode->directBlocks[0];
+        free_inode(new_file_inode); // Free the inode we just allocated
+        if (data_block != 0) {
+            free_data_block(data_block);
+        }
+        free(file->path);
+        free(file);
+        return ERROR_INVALID_INPUT; // File already exists
+    }
 
-    // For now, we've created the file's inode and File struct
-    // The directory entry addition can be implemented later when directory operations are complete
+    // Add DirectoryEntry to current directory
+    int result = add_directory_entry(session_config->current_dir_inode, filename, new_file_inode);
+    if (result != SUCCESS) {
+        // Failed to add directory entry, clean up
+        // Get the inode to find the data block before freeing
+        uint16_t inode_block = INODE_START + (new_file_inode / 32);
+        uint16_t inode_offset = (new_file_inode % 32) * sizeof(Inode);
+        Inode *temp_inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+        uint16_t data_block = temp_inode->directBlocks[0];
+        free_inode(new_file_inode);
+        if (data_block != 0) {
+            free_data_block(data_block);
+        }
+        free(file->path);
+        free(file);
+        return result;
+    }
 
     // Note: File struct should be managed by the caller
     // or stored in a file table, freeing it for now
@@ -279,73 +439,573 @@ int delete_file(const char *filename)
     return SUCCESS;
 }
 
-// assuming /foo/bar is pathname and op is O_RDONLY
-int fs_open(const char *pathname, uint16_t operation)
+// Helper function: Check if operation is allowed based on inode permissions
+// Returns SUCCESS if allowed, ERROR_PERMISSION_DENIED if not
+int check_permissions(uint16_t inode_number, uint16_t operation)
 {
-    char* dirEntry;
-    //split pathname by / (need to copy since strtok modifies the string)
+    // Get the inode
+    uint16_t inode_block = INODE_START + (inode_number / 32);
+    uint16_t inode_offset = (inode_number % 32) * sizeof(Inode);
+    Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    uint16_t permissions = inode->permissions;
+    uint16_t ownerID = inode->ownerID;
+    uint16_t uid = session_config->uid;
+    
+    // Determine which permission bits to check
+    uint16_t check_bits = 0;
+    if (operation & O_RDONLY || operation & O_RDWR) {
+        check_bits |= 0x0100; // Read bit (bit 8)
+    }
+    if (operation & O_WRONLY || operation & O_RDWR) {
+        check_bits |= 0x0080; // Write bit (bit 7)
+    }
+    
+    // Check permissions: owner (bits 8-6), group (bits 5-3), other (bits 2-0)
+    // Format: 0000000rwxrwxrwx
+    if (uid == ownerID) {
+        // Check owner permissions (bits 8-6: rwx)
+        if ((permissions & check_bits) == check_bits) {
+            return SUCCESS;
+        }
+    } else {
+        // For simplicity, check other permissions (bits 2-0: rwx)
+        // In a full implementation, we'd check group membership
+        uint16_t other_perms = permissions & 0x0007; // bits 2-0
+        uint16_t other_check = (check_bits >> 6) & 0x0007; // Shift to other position
+        if ((other_perms & other_check) == other_check) {
+            return SUCCESS;
+        }
+    }
+    
+    return ERROR_PERMISSION_DENIED;
+}
+
+// Helper function: Traverse path and return target inode number
+// Returns SUCCESS and sets out_inode if found, ERROR_FILE_NOT_FOUND otherwise
+int traverse_path(const char *pathname, uint16_t *out_inode)
+{
+    if (pathname == NULL || out_inode == NULL) {
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // Copy pathname since strtok modifies it
     char path_copy[MAX_PATH_LENGTH];
     strncpy(path_copy, pathname, MAX_PATH_LENGTH - 1);
     path_copy[MAX_PATH_LENGTH - 1] = '\0';
-    dirEntry = strtok(path_copy, "/");
-    //iterate through array (DirectoryEntry names)
-        //iterate through names.entries until find next array element
-    //once at last do things
+    
+    // Start from root if absolute path, or current directory if relative
+    uint16_t current_inode;
+    if (pathname[0] == '/') {
+        current_inode = 0; // Root inode
+        // Path is just "/"
+        if (strlen(path_copy) == 1) {
+            *out_inode = 0;
+            return SUCCESS;
+        }
+        // Move past leading slash for tokenization
+        memmove(path_copy, path_copy + 1, strlen(path_copy));
+    } else {
+        current_inode = session_config->current_dir_inode;
+    }
+    
+    // Tokenize path and traverse
+    char *component = strtok(path_copy, "/");
+    if (component == NULL) {
+        // Empty path after tokenization
+        *out_inode = current_inode;
+        return SUCCESS;
+    }
+    
+    while (component != NULL) {
+        // Find the component in current directory
+        uint16_t found_inode = find_directory_entry(current_inode, component);
+        if (found_inode == 0) {
+            return ERROR_FILE_NOT_FOUND;
+        }
+        
+        // Check if it's a directory (for intermediate components)
+        uint16_t inode_block = INODE_START + (found_inode / 32);
+        uint16_t inode_offset = (found_inode % 32) * sizeof(Inode);
+        Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+        
+        // Get next component
+        component = strtok(NULL, "/");
+        
+        if (component != NULL) {
+            // More components to traverse - must be a directory
+            if ((inode->flags & 2) == 0) {
+                return ERROR_FILE_NOT_FOUND; // Not a directory
+            }
+            current_inode = found_inode;
+        } else {
+            // Last component - this is our target
+            *out_inode = found_inode;
+            return SUCCESS;
+        }
+    }
+    
+    return ERROR_FILE_NOT_FOUND;
+}
 
-    // root directory is / in pathname
-    // start at root, then so read in inode, inode block 1 which is block INODE_START 2
-    // inside the inode should have pointers to data blocks, first is ROOT_DIRECTORY 514, but can have more
-    // then starts to traverse entries to find entry.name==foo, from there get the entry inode and do recursion for bar
-    // after finding bar, read in its inode, check bar.permissions if operation is allowed, probably bit operation like r & op == 1
-    // allocate file descriptor for process in File Descriptor Table, return to user file descriptor pointer
-    // TODO: Implement file opening
-    return -1; // Return file descriptor or error
+// Helper function: Allocate a file descriptor in the File Descriptor Table
+// Returns file descriptor index (>= 0) on success, negative error code on failure
+int allocate_file_descriptor(uint16_t inode_number, uint16_t flags)
+{
+    // FileDescriptor is 64 bytes, each block is 2048 bytes
+    // So 32 file descriptors per block (2048 / 64 = 32)
+    // Total blocks: KERNEL_MEMORY_END - KERNEL_MEMORY_START + 1 = 17 blocks
+    // Total capacity: 17 * 32 = 544 file descriptors
+    
+    uint16_t fd_per_block = BLOCK_SIZE_BYTES / sizeof(FileDescriptor); // 32
+    uint16_t total_blocks = KERNEL_MEMORY_END - KERNEL_MEMORY_START + 1; // 17
+    
+    // Search for a free file descriptor slot
+    for (uint16_t block = 0; block < total_blocks; block++) {
+        uint8_t *fd_block = HARD_DISK[KERNEL_MEMORY_START + block];
+        
+        for (uint16_t i = 0; i < fd_per_block; i++) {
+            FileDescriptor *fd = (FileDescriptor *)(fd_block + i * sizeof(FileDescriptor));
+            
+            // Check if slot is free (inode_number == 0 means free)
+            if (fd->inode_number == 0) {
+                // Allocate this slot
+                fd->inode_number = inode_number;
+                fd->offset = 0;
+                fd->flags = flags;
+                fd->referenceCount = 1;
+                
+                // Calculate and return file descriptor index
+                uint16_t fd_index = block * fd_per_block + i;
+                return (int)fd_index;
+            }
+        }
+    }
+    
+    return ERROR_INVALID_INPUT; // No free file descriptors
+}
+
+// Helper function: Get file descriptor from File Descriptor Table
+// Returns pointer to FileDescriptor or NULL if invalid
+FileDescriptor* get_file_descriptor(uint16_t fd)
+{
+    uint16_t fd_per_block = BLOCK_SIZE_BYTES / sizeof(FileDescriptor); // 32
+    uint16_t total_blocks = KERNEL_MEMORY_END - KERNEL_MEMORY_START + 1; // 17
+    uint16_t max_fd = total_blocks * fd_per_block; // 544
+    
+    if (fd >= max_fd) {
+        return NULL; // Invalid file descriptor
+    }
+    
+    uint16_t block = fd / fd_per_block;
+    uint16_t index = fd % fd_per_block;
+    
+    uint8_t *fd_block = HARD_DISK[KERNEL_MEMORY_START + block];
+    FileDescriptor *fd_ptr = (FileDescriptor *)(fd_block + index * sizeof(FileDescriptor));
+    
+    // Check if it's actually allocated
+    if (fd_ptr->inode_number == 0) {
+        return NULL; // Not allocated
+    }
+    
+    return fd_ptr;
+}
+
+// assuming /foo/bar is pathname and op is O_RDONLY
+int fs_open(const char *pathname, uint16_t operation)
+{
+    if (pathname == NULL) {
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // Traverse path to find the target file/directory
+    uint16_t target_inode;
+    int result = traverse_path(pathname, &target_inode);
+    if (result != SUCCESS) {
+        // If file doesn't exist and O_CREAT is set, create it
+        if (result == ERROR_FILE_NOT_FOUND && (operation & O_CREAT)) {
+            // Extract filename from path
+    char path_copy[MAX_PATH_LENGTH];
+    strncpy(path_copy, pathname, MAX_PATH_LENGTH - 1);
+    path_copy[MAX_PATH_LENGTH - 1] = '\0';
+            
+            char *filename = strrchr(path_copy, '/');
+            if (filename == NULL) {
+                filename = path_copy;
+            } else {
+                filename++; // Skip the '/'
+            }
+            
+            // Create the file
+            result = create_file(filename);
+            if (result != SUCCESS) {
+                return result;
+            }
+            
+            // Traverse again to get the newly created file's inode
+            result = traverse_path(pathname, &target_inode);
+            if (result != SUCCESS) {
+                return result;
+            }
+        } else {
+            return result;
+        }
+    }
+    
+    // Check if target is a file (not a directory)
+    uint16_t inode_block = INODE_START + (target_inode / 32);
+    uint16_t inode_offset = (target_inode % 32) * sizeof(Inode);
+    Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    if ((inode->flags & 2) != 0) {
+        return ERROR_INVALID_INPUT; // Cannot open directory as file
+    }
+    
+    // Check permissions
+    result = check_permissions(target_inode, operation);
+    if (result != SUCCESS) {
+        return result;
+    }
+    
+    // Update last accessed time
+    inode->time = time(NULL);
+    memcpy(HARD_DISK[inode_block] + inode_offset, inode, sizeof(Inode));
+    
+    // Allocate file descriptor
+    int fd = allocate_file_descriptor(target_inode, operation);
+    if (fd < 0) {
+        return fd; // Error allocating file descriptor
+    }
+    
+    return fd; // Return file descriptor index
 }
 
 int fs_close(uint16_t file_descriptor)
 {
-    // deallocate file descriptor
-    // TODO: Implement file closing
+    // Get the file descriptor
+    FileDescriptor *fd = get_file_descriptor(file_descriptor);
+    if (fd == NULL) {
+        return ERROR_INVALID_INPUT; // Invalid file descriptor
+    }
+    
+    // Decrement reference count
+    if (fd->referenceCount > 0) {
+        fd->referenceCount--;
+    }
+    
+    // If reference count reaches 0, free the file descriptor
+    if (fd->referenceCount == 0) {
+        // Clear the file descriptor (mark as free)
+        fd->inode_number = 0;
+        fd->offset = 0;
+        fd->flags = 0;
+        fd->referenceCount = 0;
+    }
+    
     return SUCCESS;
 }
 
-int fs_read(uint16_t file_descriptor)
+// Helper function: Recursively search directory for files matching pattern
+// This is a helper for search_files_by_name
+static int search_directory_recursive(uint16_t dir_inode, const char *pattern, 
+                                      char results[][MAX_PATH_LENGTH], int *result_count, 
+                                      int max_results, char current_path[MAX_PATH_LENGTH])
 {
-    // read first data block of file, consult inode
-    // update last accessed time in inode
-    // TODO: Implement file reading
+    if (*result_count >= max_results) {
+        return SUCCESS; // Reached max results
+    }
+    
+    // Get the directory's inode
+    uint16_t inode_block = INODE_START + (dir_inode / 32);
+    uint16_t inode_offset = (dir_inode % 32) * sizeof(Inode);
+    Inode *dir_inode_ptr = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    // Check if it's actually a directory
+    if ((dir_inode_ptr->flags & 2) == 0) {
+        return ERROR_INVALID_INPUT; // Not a directory
+    }
+    
+    // Get the directory's first data block
+    uint16_t dir_data_block = dir_inode_ptr->directBlocks[0];
+    if (dir_data_block == 0) {
+        return SUCCESS; // Empty directory
+    }
+    
+    uint8_t *dir_data = HARD_DISK[dir_data_block];
+    uint16_t dir_size = dir_inode_ptr->file_size;
+    uint16_t offset = 0;
+    
+    // Iterate through directory entries
+    while (offset < dir_size && *result_count < max_results) {
+        DirectoryEntry *entry = get_directory_entry_at_offset(dir_data, offset);
+        
+        // Skip . and .. entries
+        if (entry->name_length > 0 && 
+            !(entry->name_length == 1 && entry->name[0] == '.') &&
+            !(entry->name_length == 2 && entry->name[0] == '.' && entry->name[1] == '.')) {
+            
+            // Build full path for this entry
+            char entry_path[MAX_PATH_LENGTH];
+            char entry_name[MAX_FILENAME + 1];
+            strncpy(entry_name, entry->name, entry->name_length);
+            entry_name[entry->name_length] = '\0';
+            
+            if (strcmp(current_path, "/") == 0) {
+                // Root directory - just add name
+                snprintf(entry_path, MAX_PATH_LENGTH, "/%s", entry_name);
+            } else {
+                // Normal directory - add slash and name
+                snprintf(entry_path, MAX_PATH_LENGTH, "%s/%s", current_path, entry_name);
+            }
+            
+            // Check if name matches pattern (simple substring match)
+            // For more advanced matching, could use fnmatch or regex
+            if (strstr(entry->name, pattern) != NULL) {
+                // Get the entry's inode to check if it's a file
+                uint16_t entry_inode = entry->inode_number;
+                uint16_t entry_inode_block = INODE_START + (entry_inode / 32);
+                uint16_t entry_inode_offset = (entry_inode % 32) * sizeof(Inode);
+                Inode *entry_inode_ptr = (Inode *)(HARD_DISK[entry_inode_block] + entry_inode_offset);
+                
+                // Only add files (not directories) to results
+                if ((entry_inode_ptr->flags & 2) == 0) {
+                    // It's a file, add to results
+                    strncpy(results[*result_count], entry_path, MAX_PATH_LENGTH - 1);
+                    results[*result_count][MAX_PATH_LENGTH - 1] = '\0';
+                    (*result_count)++;
+                }
+            }
+            
+            // If it's a directory, recursively search it
+            uint16_t entry_inode = entry->inode_number;
+            uint16_t entry_inode_block = INODE_START + (entry_inode / 32);
+            uint16_t entry_inode_offset = (entry_inode % 32) * sizeof(Inode);
+            Inode *entry_inode_ptr = (Inode *)(HARD_DISK[entry_inode_block] + entry_inode_offset);
+            
+            if ((entry_inode_ptr->flags & 2) != 0) {
+                // It's a directory, recursively search it
+                search_directory_recursive(entry_inode, pattern, results, result_count, 
+                                          max_results, entry_path);
+            }
+        }
+        
+        // Move to next entry
+        offset = get_next_directory_entry_offset(dir_data, offset, dir_size);
+    }
+    
     return SUCCESS;
 }
 
-int fs_write(uint16_t file_descriptor)
+// Search for files by name/path pattern
+// Returns number of matches found, or negative error code
+int search_files_by_name(const char *search_path, const char *pattern, 
+                         char results[][MAX_PATH_LENGTH], int max_results)
 {
-    // may allocate a block
-    // each write generates 5 I/Os
-    /*
-    . Thus, each write to a
-file logically generates five I/Os: one to read the data bitmap (which is
-then updated to mark the newly-allocated block as used), one to write the
-bitmap (to reflect its new state to disk), two more to read and then write
-the inode (which is updated with the new block's location), and finally
-one to write the actual block itself.
-The amount of write traffic is even worse when one considers a simple and common operation such as file creation. To create a file, the file
-system must not only allocate an inode, but also allocate space within
-the directory containing the new file. The total amount of I/O traffic to
-do so is quite high: one read to the inode bitmap (to find a free inode),
-one write to the inode bitmap (to mark it allocated), one write to the new
-inode itself (to initialize it), one to the data of the directory (to link the
-high-level name of the file to its inode number), and one read and write
-to the directory inode to update it. If the directory needs to grow to accommodate the new entry, additional I/Os (i.e., to the data bitmap, and
-the new directory block) will be needed too. All that just to create a file!
+    if (search_path == NULL || pattern == NULL || results == NULL || max_results <= 0) {
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // Find the starting directory inode
+    uint16_t start_inode;
+    int result = traverse_path(search_path, &start_inode);
+    if (result != SUCCESS) {
+        return result;
+    }
+    
+    // Verify it's a directory
+    uint16_t inode_block = INODE_START + (start_inode / 32);
+    uint16_t inode_offset = (start_inode % 32) * sizeof(Inode);
+    Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    if ((inode->flags & 2) == 0) {
+        return ERROR_INVALID_INPUT; // Not a directory
+    }
+    
+    // Initialize results
+    int result_count = 0;
+    char current_path[MAX_PATH_LENGTH];
+    strncpy(current_path, search_path, MAX_PATH_LENGTH - 1);
+    current_path[MAX_PATH_LENGTH - 1] = '\0';
+    
+    // Normalize path - remove trailing slash unless it's root
+    size_t len = strlen(current_path);
+    if (len > 1 && current_path[len - 1] == '/') {
+        current_path[len - 1] = '\0';
+    }
+    
+    // Recursively search
+    result = search_directory_recursive(start_inode, pattern, results, &result_count, 
+                                       max_results, current_path);
+    
+    if (result != SUCCESS) {
+        return result;
+    }
+    
+    return result_count; // Return number of matches found
+}
 
-You can also see that each allocating write
-costs 5 I/Os: a pair to read and update the inode, another pair to read
-and update the data bitmap, and then finally the write of the data itself.
-How can a file system accomplish any of this with reasonable efficiency?
+// Read data from a file
+// Returns number of bytes read, or negative error code
+int fs_read(uint16_t file_descriptor, void *buffer, size_t count)
+{
+    if (buffer == NULL) {
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // Get the file descriptor
+    FileDescriptor *fd = get_file_descriptor(file_descriptor);
+    if (fd == NULL) {
+        return ERROR_INVALID_INPUT; // Invalid file descriptor
+    }
+    
+    // Check if read is allowed
+    if ((fd->flags & O_RDONLY) == 0 && (fd->flags & O_RDWR) == 0) {
+        return ERROR_PERMISSION_DENIED;
+    }
+    
+    // Get the file's inode
+    uint16_t inode_number = fd->inode_number;
+    uint16_t inode_block = INODE_START + (inode_number / 32);
+    uint16_t inode_offset = (inode_number % 32) * sizeof(Inode);
+    Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    // Check if it's a file (not a directory)
+    if ((inode->flags & 2) != 0) {
+        return ERROR_INVALID_INPUT; // Cannot read directory
+    }
+    
+    // Calculate how much we can read
+    uint32_t file_size = inode->file_size;
+    uint16_t current_offset = fd->offset;
+    
+    if (current_offset >= file_size) {
+        return 0; // Already at end of file
+    }
+    
+    // Calculate how many bytes to read
+    size_t bytes_to_read = count;
+    if (current_offset + bytes_to_read > file_size) {
+        bytes_to_read = file_size - current_offset;
+    }
+    
+    // Read from direct blocks
+    size_t bytes_read = 0;
+    uint16_t block_index = current_offset / BLOCK_SIZE_BYTES;
+    uint16_t offset_in_block = current_offset % BLOCK_SIZE_BYTES;
+    
+    while (bytes_read < bytes_to_read && block_index < 6) {
+        uint16_t data_block = inode->directBlocks[block_index];
+        if (data_block == 0) {
+            break; // No more blocks
+        }
+        
+        // Calculate how much to read from this block
+        size_t bytes_from_block = BLOCK_SIZE_BYTES - offset_in_block;
+        if (bytes_read + bytes_from_block > bytes_to_read) {
+            bytes_from_block = bytes_to_read - bytes_read;
+        }
+        
+        // Copy data from block to buffer
+        memcpy((uint8_t *)buffer + bytes_read, 
+               HARD_DISK[data_block] + offset_in_block, 
+               bytes_from_block);
+        
+        bytes_read += bytes_from_block;
+        block_index++;
+        offset_in_block = 0; // Next block starts at beginning
+    }
+    
+    // Update file descriptor offset
+    fd->offset += bytes_read;
+    
+    // Update last accessed time in inode
+    inode->time = time(NULL);
+    memcpy(HARD_DISK[inode_block] + inode_offset, inode, sizeof(Inode));
+    
+    return (int)bytes_read;
+}
 
-    */
-    // TODO: Implement file writing
-    return SUCCESS;
+// Write data to a file
+// Returns number of bytes written, or negative error code
+int fs_write(uint16_t file_descriptor, const void *buffer, size_t count)
+{
+    if (buffer == NULL) {
+        return ERROR_INVALID_INPUT;
+    }
+    
+    // Get the file descriptor
+    FileDescriptor *fd = get_file_descriptor(file_descriptor);
+    if (fd == NULL) {
+        return ERROR_INVALID_INPUT; // Invalid file descriptor
+    }
+    
+    // Check if write is allowed
+    if ((fd->flags & O_WRONLY) == 0 && (fd->flags & O_RDWR) == 0) {
+        return ERROR_PERMISSION_DENIED;
+    }
+    
+    // Get the file's inode
+    uint16_t inode_number = fd->inode_number;
+    uint16_t inode_block = INODE_START + (inode_number / 32);
+    uint16_t inode_offset = (inode_number % 32) * sizeof(Inode);
+    Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    // Check if it's a file (not a directory)
+    if ((inode->flags & 2) != 0) {
+        return ERROR_INVALID_INPUT; // Cannot write to directory
+    }
+    
+    // Write to direct blocks
+    size_t bytes_written = 0;
+    uint16_t current_offset = fd->offset;
+    uint16_t block_index = current_offset / BLOCK_SIZE_BYTES;
+    uint16_t offset_in_block = current_offset % BLOCK_SIZE_BYTES;
+    
+    while (bytes_written < count && block_index < 6) {
+        // Get or allocate data block
+        uint16_t data_block = inode->directBlocks[block_index];
+        if (data_block == 0) {
+            // Need to allocate a new block
+            data_block = find_free_data_block();
+            if (data_block == 0) {
+                break; // No free blocks available
+            }
+            inode->directBlocks[block_index] = data_block;
+        }
+        
+        // Calculate how much to write to this block
+        size_t bytes_to_block = BLOCK_SIZE_BYTES - offset_in_block;
+        if (bytes_written + bytes_to_block > count) {
+            bytes_to_block = count - bytes_written;
+        }
+        
+        // Copy data from buffer to block
+        memcpy(HARD_DISK[data_block] + offset_in_block,
+               (const uint8_t *)buffer + bytes_written,
+               bytes_to_block);
+        
+        bytes_written += bytes_to_block;
+        block_index++;
+        offset_in_block = 0; // Next block starts at beginning
+    }
+    
+    // Update file size if we wrote past the end
+    uint32_t new_size = current_offset + bytes_written;
+    if (new_size > inode->file_size) {
+        inode->file_size = new_size;
+    }
+    
+    // Update file descriptor offset
+    fd->offset += bytes_written;
+    
+    // Update modification and access times
+    inode->mtime = time(NULL);
+    inode->time = time(NULL);
+    
+    // Write back updated inode
+    memcpy(HARD_DISK[inode_block] + inode_offset, inode, sizeof(Inode));
+    
+    return (int)bytes_written;
 }
 
 // creating the free bit map/array
@@ -378,53 +1038,375 @@ int print_hard_disk_ascii(int start_block, int end_block)
     }
     return 0;
 }
+// Helper function: List directory contents
+void list_directory(uint16_t dir_inode)
+{
+    // Get the directory's inode
+    uint16_t inode_block = INODE_START + (dir_inode / 32);
+    uint16_t inode_offset = (dir_inode % 32) * sizeof(Inode);
+    Inode *dir_inode_ptr = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+    
+    // Check if it's actually a directory
+    if ((dir_inode_ptr->flags & 2) == 0) {
+        printf("Error: Not a directory\n");
+        return;
+    }
+    
+    // Get the directory's first data block
+    uint16_t dir_data_block = dir_inode_ptr->directBlocks[0];
+    if (dir_data_block == 0) {
+        printf("(empty directory)\n");
+        return;
+    }
+    
+    uint8_t *dir_data = HARD_DISK[dir_data_block];
+    uint16_t dir_size = dir_inode_ptr->file_size;
+    uint16_t offset = 0;
+    int count = 0;
+    
+    // Iterate through directory entries
+    while (offset < dir_size) {
+        DirectoryEntry *entry = get_directory_entry_at_offset(dir_data, offset);
+        
+        // Skip . and .. entries
+        if (entry->name_length > 0 && 
+            !(entry->name_length == 1 && entry->name[0] == '.') &&
+            !(entry->name_length == 2 && entry->name[0] == '.' && entry->name[1] == '.')) {
+            
+            // Get entry's inode to check type
+            uint16_t entry_inode = entry->inode_number;
+            uint16_t entry_inode_block = INODE_START + (entry_inode / 32);
+            uint16_t entry_inode_offset = (entry_inode % 32) * sizeof(Inode);
+            Inode *entry_inode_ptr = (Inode *)(HARD_DISK[entry_inode_block] + entry_inode_offset);
+            
+            // Print entry info
+            if ((entry_inode_ptr->flags & 2) != 0) {
+                printf("  [DIR]  %.*s (inode: %d)\n", entry->name_length, entry->name, entry_inode);
+            } else {
+                printf("  [FILE] %.*s (inode: %d, size: %u bytes)\n", 
+                       entry->name_length, entry->name, entry_inode, entry_inode_ptr->file_size);
+            }
+            count++;
+        }
+        
+        // Move to next entry
+        offset = get_next_directory_entry_offset(dir_data, offset, dir_size);
+    }
+    
+    if (count == 0) {
+        printf("(empty directory)\n");
+    }
+}
+
+// Interactive shell for file system demo
+int interactive_shell()
+{
+    char input[1024];
+    char command[64];
+    char arg1[256];
+    char arg2[256];
+    int fd;
+    int result;
+    
+    printf("========================================\n");
+    printf("  Interactive File System Shell\n");
+    printf("========================================\n");
+    printf("Type 'help' for available commands\n");
+    printf("Type 'exit' or 'quit' to exit\n\n");
+    
+    while (1) {
+        // Print prompt
+        printf("fs> ");
+        fflush(stdout);
+        
+        // Read input
+        if (fgets(input, sizeof(input), stdin) == NULL) {
+            printf("\n");
+            break;
+        }
+        
+        // Remove newline
+        input[strcspn(input, "\n")] = 0;
+        
+        // Skip empty lines
+        if (strlen(input) == 0) {
+            continue;
+        }
+        
+        // Parse command
+        int parsed = sscanf(input, "%63s %255s %255s", command, arg1, arg2);
+        
+        if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
+            printf("\nAvailable commands:\n");
+            printf("  mkdir <dir>          - Create a directory\n");
+            printf("  create <file>         - Create a file\n");
+            printf("  ls [dir]              - List directory contents (default: current directory)\n");
+            printf("  cd <dir>              - Change directory\n");
+            printf("  pwd                   - Print current working directory\n");
+            printf("  open <file> [mode]     - Open a file (mode: r=read, w=write, rw=readwrite)\n");
+            printf("  close <fd>            - Close a file descriptor\n");
+            printf("  read <fd> [bytes]      - Read from file (default: 1024 bytes)\n");
+            printf("  write <fd> <text>      - Write text to file\n");
+            printf("  search <pattern> [dir] - Search for files by name pattern\n");
+            printf("  stat <file>            - Show file information\n");
+            printf("  help                   - Show this help message\n");
+            printf("  exit/quit              - Exit the shell\n\n");
+            
+        } else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
+            printf("Goodbye!\n");
+            break;
+            
+        } else if (strcmp(command, "pwd") == 0) {
+            printf("%s\n", session_config->current_working_dir);
+            
+        } else if (strcmp(command, "mkdir") == 0) {
+            if (parsed < 2) {
+                printf("Usage: mkdir <directory_name>\n");
+                continue;
+            }
+            uint16_t dir_inode = create_directory(arg1);
+            if (dir_inode != 0) {
+                printf("Created directory '%s' (inode: %d)\n", arg1, dir_inode);
+            } else {
+                printf("Failed to create directory '%s'\n", arg1);
+            }
+            
+        } else if (strcmp(command, "create") == 0) {
+            if (parsed < 2) {
+                printf("Usage: create <file_name>\n");
+                continue;
+            }
+            result = create_file(arg1);
+            if (result == SUCCESS) {
+                printf("Created file '%s'\n", arg1);
+            } else {
+                printf("Failed to create file '%s' (error: %d)\n", arg1, result);
+            }
+            
+        } else if (strcmp(command, "ls") == 0) {
+            if (parsed >= 2) {
+                // List specified directory
+                uint16_t target_inode;
+                result = traverse_path(arg1, &target_inode);
+                if (result == SUCCESS) {
+                    printf("Contents of '%s':\n", arg1);
+                    list_directory(target_inode);
+                } else {
+                    printf("Error: Cannot access '%s' (error: %d)\n", arg1, result);
+                }
+            } else {
+                // List current directory
+                printf("Contents of '%s':\n", session_config->current_working_dir);
+                list_directory(session_config->current_dir_inode);
+            }
+            
+        } else if (strcmp(command, "cd") == 0) {
+            if (parsed < 2) {
+                printf("Usage: cd <directory>\n");
+                continue;
+            }
+            uint16_t target_inode;
+            result = traverse_path(arg1, &target_inode);
+            if (result == SUCCESS) {
+                // Check if it's a directory
+                uint16_t inode_block = INODE_START + (target_inode / 32);
+                uint16_t inode_offset = (target_inode % 32) * sizeof(Inode);
+                Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+                
+                if ((inode->flags & 2) != 0) {
+                    session_config->current_dir_inode = target_inode;
+                    // Update current working directory path
+                    if (arg1[0] == '/') {
+                        strncpy(session_config->current_working_dir, arg1, MAX_PATH_LENGTH - 1);
+                    } else {
+                        // Relative path
+                        if (strcmp(session_config->current_working_dir, "/") == 0) {
+                            snprintf(session_config->current_working_dir, MAX_PATH_LENGTH, "/%s", arg1);
+                        } else {
+                            snprintf(session_config->current_working_dir, MAX_PATH_LENGTH, "%s/%s", 
+                                    session_config->current_working_dir, arg1);
+                        }
+                    }
+                } else {
+                    printf("Error: '%s' is not a directory\n", arg1);
+                }
+            } else {
+                printf("Error: Cannot change to '%s' (error: %d)\n", arg1, result);
+            }
+            
+        } else if (strcmp(command, "open") == 0) {
+            if (parsed < 2) {
+                printf("Usage: open <file> [mode]\n");
+                continue;
+            }
+            uint16_t mode = O_RDONLY;
+            if (parsed >= 3) {
+                if (strcmp(arg2, "r") == 0 || strcmp(arg2, "read") == 0) {
+                    mode = O_RDONLY;
+                } else if (strcmp(arg2, "w") == 0 || strcmp(arg2, "write") == 0) {
+                    mode = O_WRONLY;
+                } else if (strcmp(arg2, "rw") == 0 || strcmp(arg2, "readwrite") == 0) {
+                    mode = O_RDWR;
+                } else if (strcmp(arg2, "c") == 0 || strcmp(arg2, "create") == 0) {
+                    mode = O_RDWR | O_CREAT;
+                }
+            }
+            fd = fs_open(arg1, mode);
+            if (fd >= 0) {
+                printf("Opened '%s' with fd = %d\n", arg1, fd);
+            } else {
+                printf("Failed to open '%s' (error: %d)\n", arg1, fd);
+            }
+            
+        } else if (strcmp(command, "close") == 0) {
+            if (parsed < 2) {
+                printf("Usage: close <file_descriptor>\n");
+                continue;
+            }
+            fd = atoi(arg1);
+            result = fs_close(fd);
+            if (result == SUCCESS) {
+                printf("Closed file descriptor %d\n", fd);
+            } else {
+                printf("Failed to close fd %d (error: %d)\n", fd, result);
+            }
+            
+        } else if (strcmp(command, "read") == 0) {
+            if (parsed < 2) {
+                printf("Usage: read <file_descriptor> [bytes]\n");
+                continue;
+            }
+            fd = atoi(arg1);
+            size_t bytes_to_read = 1024; // Default
+            if (parsed >= 3) {
+                bytes_to_read = (size_t)atoi(arg2);
+            }
+            
+            char *read_buffer = malloc(bytes_to_read + 1);
+            if (read_buffer == NULL) {
+                printf("Error: Memory allocation failed\n");
+                continue;
+            }
+            
+            result = fs_read(fd, read_buffer, bytes_to_read);
+            if (result >= 0) {
+                read_buffer[result] = '\0'; // Null terminate
+                printf("Read %d bytes:\n", result);
+                printf("---\n%s\n---\n", read_buffer);
+            } else {
+                printf("Failed to read from fd %d (error: %d)\n", fd, result);
+            }
+            free(read_buffer);
+            
+        } else if (strcmp(command, "write") == 0) {
+            if (parsed < 2) {
+                printf("Usage: write <file_descriptor> <text>\n");
+                continue;
+            }
+            fd = atoi(arg1);
+            
+            // Find the text to write (everything after "write <fd> ")
+            char *text_start = input;
+            // Skip past "write "
+            text_start = strchr(text_start, ' ');
+            if (text_start) {
+                text_start++; // Skip space
+                // Skip past fd
+                while (*text_start && *text_start != ' ') text_start++;
+                // Skip spaces
+                while (*text_start == ' ') text_start++;
+            }
+            
+            if (text_start == NULL || strlen(text_start) == 0) {
+                printf("Error: No text to write\n");
+                continue;
+            }
+            
+            result = fs_write(fd, text_start, strlen(text_start));
+            if (result >= 0) {
+                printf("Wrote %d bytes to fd %d\n", result, fd);
+            } else {
+                printf("Failed to write to fd %d (error: %d)\n", fd, result);
+            }
+            
+        } else if (strcmp(command, "search") == 0) {
+            if (parsed < 2) {
+                printf("Usage: search <pattern> [directory]\n");
+                continue;
+            }
+            const char *search_dir = (parsed >= 3) ? arg2 : session_config->current_working_dir;
+            char results[100][MAX_PATH_LENGTH];
+            int num_results = search_files_by_name(search_dir, arg1, results, 100);
+            if (num_results >= 0) {
+                printf("Found %d file(s) matching '%s' in '%s':\n", num_results, arg1, search_dir);
+                for (int i = 0; i < num_results; i++) {
+                    printf("  %d. %s\n", i + 1, results[i]);
+                }
+            } else {
+                printf("Search failed (error: %d)\n", num_results);
+            }
+            
+        } else if (strcmp(command, "stat") == 0) {
+            if (parsed < 2) {
+                printf("Usage: stat <file>\n");
+                continue;
+            }
+            uint16_t target_inode;
+            result = traverse_path(arg1, &target_inode);
+            if (result == SUCCESS) {
+                uint16_t inode_block = INODE_START + (target_inode / 32);
+                uint16_t inode_offset = (target_inode % 32) * sizeof(Inode);
+                Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
+                
+                printf("File: %s\n", arg1);
+                printf("  Inode: %d\n", target_inode);
+                printf("  Type: %s\n", (inode->flags & 2) ? "Directory" : "File");
+                printf("  Size: %u bytes\n", inode->file_size);
+                printf("  Permissions: %o\n", inode->permissions);
+                printf("  Owner: %d\n", inode->ownerID);
+                printf("  Created: %s", ctime(&inode->ctime));
+                printf("  Modified: %s", ctime(&inode->mtime));
+                printf("  Accessed: %s", ctime(&inode->time));
+            } else {
+                printf("Error: Cannot stat '%s' (error: %d)\n", arg1, result);
+            }
+            
+        } else {
+            printf("Unknown command: %s\n", command);
+            printf("Type 'help' for available commands\n");
+        }
+    }
+    
+    return 0;
+}
+
 int main()
 {
+    printf("========================================\n");
+    printf("  File System Demo\n");
+    printf("========================================\n\n");
+    
+    // Initialize session
     session_config = (SessionConfig *)malloc(sizeof(SessionConfig));
     session_config->uid = 0;
-    strcpy(session_config->current_working_dir, "/"); // Initialize current working directory
-    session_config->current_dir_inode = 0; // Root directory inode number
+    strcpy(session_config->current_working_dir, "/");
+    session_config->current_dir_inode = 0;
+    session_config->show_hidden_files = false;
+    session_config->verbose_mode = true;
 
-    printf("Number of blocks is %d\n", BLOCK_NUM);
-    printf("Size of Block is %d bytes\n", BLOCK_SIZE_BYTES);
-    printf("Size of Inode is %ld bytes\n", sizeof(Inode)); // 64
-    printf("Number of Inodes is %ld in %d inode blocks\n", (INODE_END - INODE_START + 1) * (BLOCK_SIZE_BYTES / sizeof(Inode)),
-           (INODE_END - INODE_START + 1));                              // 16384
-    printf("Number of data blocks is %d\n", DATA_END - DATA_START + 1); // 15870
+    printf("File System Configuration:\n");
+    printf("  Blocks: %d\n", BLOCK_NUM);
+    printf("  Block Size: %d bytes\n", BLOCK_SIZE_BYTES);
+    printf("  Inode Size: %ld bytes\n", sizeof(Inode));
+    printf("  Total Inodes: %ld\n", (INODE_END - INODE_START + 1) * (BLOCK_SIZE_BYTES / sizeof(Inode)));
+    printf("  Data Blocks: %d\n", DATA_END - DATA_START + 1);
+    printf("\n");
 
-    // 48 is the ASCII charcter 0 to see for printing
-    memset(HARD_DISK, 48, sizeof(HARD_DISK));
-    // prints first block
-    // print_hard_disk_ascii(0, 1); //printed 2048 0s
-    // reset_HARD_DISK fills hard disk with 0s
+    // Initialize file system
     reset_hard_disk();
-
     create_root_directory();
-    Inode rootInode;
-    memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
-    printf("Printing Root Inode:\n");
-    printf("\tCreation Time: %s", ctime(&rootInode.ctime));
-    printf("\tStarting Block: %d\n", rootInode.directBlocks[0]);
-    printf("\tPermissions: %o\n", rootInode.permissions);
-    printf("\tOwner/User ID: %d\n", rootInode.ownerID);
-    printf("\tFile Size: %u bytes\n", rootInode.file_size);
-    printf("Printing Root Directory Data Block:\n");
-    DirectoryEntry *entry = (DirectoryEntry *)HARD_DISK[ROOT_DIRECTORY];
-    printf("\tEntry 1 - Inode: %d, Name: %.*s\n", entry->inode_number, entry->name_length, entry->name);
-    entry = (DirectoryEntry *)((uint8_t *)entry + entry->record_length);
-    printf("\tEntry 2 - Inode: %d, Name: %.*s\n", entry->inode_number, entry->name_length, entry->name);
+    printf("✓ Root directory created\n\n");
     
-    uint16_t home_inode = create_directory("home");
-    if (home_inode != 0) {
-        printf("Created directory 'home' with inode: %d\n", home_inode);
-        // Get the home directory's inode to access its data block
-        Inode *home_inode_ptr = (Inode *)(HARD_DISK[INODE_START + (home_inode / 32)] + (home_inode % 32) * sizeof(Inode));
-        DirectoryEntry *homeDir = (DirectoryEntry *)HARD_DISK[home_inode_ptr->directBlocks[0]];
-        printf("\tEntry 1 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
-        DirectoryEntry *homeDir2 = (DirectoryEntry *)((uint8_t *)homeDir + homeDir->record_length);
-        printf("\tEntry 2 - Inode: %d, Name: %.*s\n", homeDir2->inode_number, homeDir2->name_length, homeDir2->name);
-    } else {
-        printf("Failed to create directory 'home'\n");
-    }
-    return 0;
+    // Start interactive shell
+    return interactive_shell();
 }
