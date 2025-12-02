@@ -46,24 +46,16 @@ void clear_bit(uint8_t *bitmap, uint16_t index)
     bitmap[byte_index] &= ~(1 << bit_index);
 }
 
-// Get pointer to inode bitmap in hard disk (block FREE_BITMAP = 1)
+// Get pointer to inode bitmap in hard disk (block FREE_INODE_BITMAP = 1)
 uint8_t* get_inode_bitmap()
 {
-    return HARD_DISK[FREE_BITMAP];
+    return HARD_DISK[FREE_INODE_BITMAP];
 }
 
-// Get pointer to data bitmap in hard disk
-// Note: Since block 1 is full with inode bitmap, we'll use a simple approach:
-// Track data blocks by checking if they're in use via their inode references
-// For now, we'll use a second bitmap approach stored elsewhere or check blocks directly
-// For simplicity, we'll use block SUPERBLOCK (0) for data bitmap tracking
-// (assuming superblock uses minimal space, or we can use a different approach)
+// Get pointer to data bitmap in hard disk (block FREE_DATA_BITMAP = 2)
 uint8_t* get_data_bitmap()
 {
-    // Use a portion of superblock or implement differently
-    // For now, return NULL and implement direct block checking
-    // TODO: Implement proper data block bitmap storage
-    return NULL; // Will implement direct checking instead
+    return HARD_DISK[FREE_DATA_BITMAP];
 }
 
 uint16_t find_free_inode()
@@ -83,32 +75,17 @@ uint16_t find_free_inode()
 
 uint16_t find_free_data_block()
 {
-    // Since we don't have a dedicated data bitmap block, we'll use a simple approach:
-    // Check blocks directly by looking for zero-filled blocks
-    // This is less efficient but works with the current layout constraints
-    // A better solution would be to redesign the bitmap layout
-    
-    // Simple linear search for a free block (all zeros indicates free)
-    for (uint16_t block_num = DATA_START; block_num <= DATA_END; block_num++)
+    uint8_t *data_bitmap = get_data_bitmap();
+    // Start from first non-reserved inode
+    for (uint16_t i = DATA_START; i < DATA_END; i++)
     {
-        // Check if block is all zeros (free)
-        int is_free = 1;
-        for (int i = 0; i < BLOCK_SIZE_BYTES; i++)
+        if (!is_bit_set(data_bitmap, i))
         {
-            if (HARD_DISK[block_num][i] != 0)
-            {
-                is_free = 0;
-                break;
-            }
-        }
-        if (is_free)
-        {
-            // Mark block as allocated by writing a marker (or use a different method)
-            // For now, we'll rely on the block being non-zero when used
-            return block_num;
+            set_bit(data_bitmap, i); // Mark as allocated
+            return i;
         }
     }
-    return 0; // 0 indicates no free data blocks
+    return 0; // 0 indicates no free data blocks (since inode 0 is reserved)
 }
 
 void free_inode(uint16_t inode_number)
