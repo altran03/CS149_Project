@@ -281,30 +281,68 @@ int delete_file(const char *filename)
 }
 
 // assuming /foo/bar is pathname and op is O_RDONLY
-int fs_open(const char *pathname, uint16_t operation)
+uint16_t fs_open(const char *pathname, uint16_t operation)
 {
     char* dirEntry;
-    Inode rootInode;
-    memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
-    DirectoryEntry *entry = (DirectoryEntry *)HARD_DISK[ROOT_DIRECTORY];
-
-    //split pathname by /
-    dirEntry = strtok(pathname, s);
-    while(dirEntry != NULL) {
-
-    }
-    //iterate through array (DirectoryEntry names)
-        //iterate through names.entries until find next array element
-    //once at last do things
-
     // root directory is / in pathname
     // start at root, then so read in inode, inode block 1 which is block INODE_START 2
-    // inside the inode should have pointers to data blocks, first is ROOT_DIRECTORY 514, but can have more
-    // then starts to traverse entries to find entry.name==foo, from there get the entry inode and do recursion for bar
-    // after finding bar, read in its inode, check bar.permissions if operation is allowed, probably bit operation like r & op == 1
-    // allocate file descriptor for process in File Descriptor Table, return to user file descriptor pointer
-    // TODO: Implement file opening
-    return -1; // Return file descriptor or error
+    Inode rootInode;
+    memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
+    DirectoryEntry *curEntry = (DirectoryEntry *)HARD_DISK[ROOT_DIRECTORY];
+
+    //split pathname by /
+    dirEntry = strtok(pathname, '/'); 
+
+    while(dirEntry != NULL) {
+        //iterate through names.entries until find next entry that matches path
+        uint8_t i = 0; 
+        bool found = false;
+
+        while (i < curEntry->entries_length){
+            DirectoryEntry *nextEntry = curEntry->entries[i];
+            //if matches change curEntry to nextEntry
+            if (strcmp(nextEntry->name, dirEntry) == 0){
+                curEntry = nextEntry;
+                found = true;
+                break; //found so stop looking
+            }
+            i++;
+        }
+
+        if (!found){
+            printf("Pathname not found!, full_path: %s, missing: %s", pathname, dirEntry);
+            return -1;
+        }
+        dirEntry = strtok(NULL, '/');
+    }
+ 
+    Inode in;
+    // after finding bar, read in its inode
+    uint16_t inode_place[2];
+    inode_number_to_disk_location(curEntry->inode_number, inode_place);
+    memcpy(&in, HARD_DISK[inode_place[0]] + inode_place[1], sizeof(Inode));
+
+    //check bar.permissions if operation is allowed, probably bit operation like r & op == 1
+    if (operation and in.permissions are good) { // NOT DONE 
+        //create FileDescriptor and return
+        FileDescriptor fd;
+        fd = (FileDescriptor)malloc(sizeof(FileDescriptor));
+        fd.inode_number = curEntry->inode_number;
+        fd.offset = 0; //start at 0 for read/write, can later change for append
+        fd.referenceCount = 1;
+
+        //allocate to hard disk
+        uint16_t fd_num = find_free_file_descriptor();
+        uint16_t result[2];
+        fd_number_to_disk_location(fd_num, result);
+        memcpy(HARD_DISK[result[0]] + result[1], fd, sizeof(FileDescriptor));
+        return fd_num;
+    }
+    // allocate file descriptor for process in File Descriptor Table, return to user file descriptor index
+
+    // TODO: Implement file opening NOT DONE
+    
+    return 0; // Return file descriptor or error
 }
 
 int fs_close(uint16_t file_descriptor)

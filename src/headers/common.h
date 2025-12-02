@@ -42,13 +42,14 @@ typedef struct
 // Reserved Block Numbers
 #define SUPERBLOCK 0
 #define FREE_INODE_BITMAP 1
-#define FREE_DATA_BITMAP 2
-#define INODE_START 3 // 512 Inode blocks for each block, each Inode block has 32 Inodes, in total 2^14 inodes, one for each block
-#define INODE_END 514
-#define ROOT_DIRECTORY 515
-#define KERNEL_MEMORY_START 516 //stores FileDescriptors
-#define KERNEL_MEMORY_END 532 //there are at most 4096 FileDescriptors so 12 < 16 bits
-#define DATA_START 533 // start of data
+#define FREE_KERNEL_BITMAP 2
+#define FREE_DATA_BITMAP 3
+#define INODE_START 4 // 512 Inode blocks for each block, each Inode block has 32 Inodes, in total 2^14 inodes, one for each block
+#define INODE_END 515
+#define ROOT_DIRECTORY 516
+#define KERNEL_MEMORY_START 517 //stores FileDescriptors
+#define KERNEL_MEMORY_END 533 //there are at most 4096 FileDescriptors so 12 < 16 bits
+#define DATA_START 534 // start of data
 #define DATA_END 16384 // last block
 
 // 64 bytes
@@ -71,29 +72,28 @@ typedef struct
 static_assert(sizeof(Inode) == 64, "Inode must be 64 bytes in size");
 // DirectoryEntry structure - represents a single entry in a directory
 // On disk: directories are just sequences of DirectoryEntry structures
-// In memory: directories are arrays/lists of DirectoryEntry - no Directory wrapper needed
+// In memory: directories are dynamic arrays/lists of DirectoryEntry - no Directory wrapper needed
 // Note: Flexible array member - actual size varies based on name_length
-struct DirectoryEntry {
-    uint16_t inode_number;  // inode number of the file/directory
-    uint16_t record_length; // total size of this entry (allows variable-length names)
-    uint8_t name_length;    // length of the name (not including null terminator)
-    char name[];            // flexible array: variable-length name, null-terminated
-};
-typedef struct DirectoryEntry DirectoryEntry;
 
-// File structure for file metadata in memory
-typedef struct {
-    uint16_t inode_number;
-    uint32_t file_size;
-    char *path;
-} File;
+struct DirectoryEntry_Struct; 
 
+typedef struct DirectoryEntry_Struct {
+    uint16_t inode_number; //inode of entry
+    uint8_t record_length; //total bytes for name + leftover space
+    uint8_t str_length; //total bytes/char for name
+    uint8_t entries_length; //number of entries, once again for file is 0
+    struct DirectoryEntry_Struct **entries; //for file is 0
+    char *path; //pointer for path
+    char name[]; //flexible array for name string, at most 256 char considering str_length
+}DirectoryEntry;
+
+//8 bytes
 typedef struct {
     uint16_t inode_number;
     uint16_t offset; //in bytes for block, max should be 2048
     uint16_t flags; //file operation that will be compared with inode permissions
     uint16_t referenceCount; //number of concurrent references, 128 max can be increased if necessary
 } FileDescriptor;
-static_assert(sizeof(FileDescriptor) == 64, "FileDescriptor must be 64 bytes in size");
+static_assert(sizeof(FileDescriptor) == 8, "FileDescriptor must be 64 bytes in size");
 
 #endif

@@ -20,8 +20,17 @@ uint8_t* get_data_bitmap();
 // Allocation functions
 uint16_t find_free_inode();
 uint16_t find_free_data_block();
+uint16_t find_free_file_descriptor();
 
 // Deallocation functions
 void free_inode(uint16_t inode_number);
 void free_data_block(uint16_t block_number);
+void free_file_descriptor(uint16_t file_descriptor);
+
+//Access functions
+
+//puts block_number and byte_offset into result array
+void inode_number_to_disk_location(uint16_t inode_num, uint16_t result[2]);
+void fd_number_to_disk_location(uint16_t fd, uint16_t result[2]);
+
 #endif
