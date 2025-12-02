@@ -20,4 +20,8 @@ int fs_close(uint16_t file_descriptor);
 int fs_read(uint16_t file_descriptor, void *buffer, size_t count);
 int fs_write(uint16_t file_descriptor, const void *buffer, size_t count);
 
+// File system initialization
+void reset_hard_disk(void);
+void create_root_directory(void);
+
 #endif
