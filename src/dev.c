@@ -1,92 +1,28 @@
+#include "headers/common.h"
+#include "headers/utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-// #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-// #include <dirent.h>
 #include <time.h>
-// #include <pwd.h>
-// #include <grp.h>
 #include <errno.h>
 #include <stdint.h>
 #include <assert.h>
 #include <stdbool.h>
 
-#define MAX_PATH_LENGTH 1024
-#define MAX_FILENAME 256
-#define BUFFER_SIZE 4096
-
-// Error codes
-#define SUCCESS 0
-#define ERROR_FILE_NOT_FOUND -1
-#define ERROR_PERMISSION_DENIED -2
-#define ERROR_INVALID_INPUT -3
-
-typedef struct
-{
-    uint16_t uid; // current user id
-    char current_working_dir[MAX_PATH_LENGTH];
-    bool show_hidden_files;
-    bool verbose_mode;
-} SessionConfig;
-
+// Global session configuration
 SessionConfig *session_config;
 
-// HARD DISK
-#define BLOCK_NUM 16384       // each block is 2KiB (2^11), so total size = 2^11*16384(2^14) = 32MiB(2^25)
-#define BLOCK_SIZE_BYTES 2048 // 2^11 bytes
-
-// Reserved Block Numbers
-#define SUPERBLOCK 0
-#define FREE_BITMAP 1
-#define INODE_START 2      // Also block containing Root inode (metadata)
-#define INODE_END 513      // 512 Inode blocks for each block, each Inode block has 32 Inodes, in total 2^14 inodes, one for each block
-#define ROOT_DIRECTORY 514 // First Block containing Root data
-#define DATA_START 515     // start of data
-#define DATA_END 16384     // last block
-
-/*
-16 bits is enough for number of blocks 2^16=65536>16384, each block is 2KiB, 16384, 2048
-uint8_t, one byte is 8 bits
-*/
+// HARD DISK - actual storage array
+// 16 bits is enough for number of blocks 2^16=65536>16384, each block is 2KiB
 uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES];
-
-// 64 bytes
-typedef struct
-{ // the Inode stores metadata about a file or directory
-
-    uint16_t ownerID;
-    uint16_t permissions;           // 0000000rwxrwxrwx, owner, group, other/world, 0 would be -/no and 1 would be yes
-    uint32_t file_size;             // in bytes
-    uint16_t directBlocks[6];       // this can be reduced for more metadata options
-    uint16_t indirect;              // 0 means uninitialized
-    uint16_t second_level_indirect; // 0 means uninitialized
-    // we're okay that it isn't 2038 yet to store time in 32 bits
-    time_t time;    // last accessed
-    time_t ctime;   // creation time
-    time_t mtime;   // last modified
-    time_t dtime;   // file deletion time
-    uint32_t flags; // 1 regular file, 2 directory, 4 indirect block, 8 second_level_indirect block, etc.
-
-} Inode;
-static_assert(sizeof(Inode) == 64, "Inode must be 64 bytes in size");
 
 int init_inodes(const char *filename)
 {
+    // TODO: Implement inode initialization from file
+    return SUCCESS;
 }
-
-struct DirectoryEntry_Struct; 
-
-typedef struct DirectoryEntry_Struct {
-    uint16_t inode_number; //inode of entry
-    uint8_t record_length; //total bytes for name + leftover space
-    uint8_t str_length; //total bytes/char for name
-    uint8_t entries_length; //number of entries, once again for file is 0
-    struct DirectoryEntry_Struct **entries; //for file is 0
-    char *path; //pointer for path
-    char name[]; //flexible array for name string, at most 256 char considering str_length
-}DirectoryEntry;
 
 // should not be called by itself, already called in create_root_directory()
 void init_root_inode()
@@ -106,33 +42,40 @@ void init_root_inode()
     memcpy(HARD_DISK[INODE_START], in, sizeof(Inode));//saved to hard disk array
 }
 
-//does both directory and inode, for now pases back directory*, maybe change to void
-DirectoryEntry* create_root_directory(){
-    DirectoryEntry *dir = malloc(sizeof(DirectoryEntry));
-    dir->inode_number = INODE_START; 
-    dir->entries_length = 0;
-    dir->path = malloc(sizeof(char)*2); // '/' and '\0' null terminator
-    dir->name[0] = '/';
-    dir->entries = NULL;
+// Creates root directory: initializes root inode and root directory data block
+// Root directory data block contains: . (self) and .. (parent, also self for root)
+void create_root_directory(){
+    // Initialize root inode (inode 0 at INODE_START block)
     init_root_inode();
-    return dir;
+    
+    // Initialize root directory data block with . and .. entries
+    uint8_t *root_data_block = HARD_DISK[ROOT_DIRECTORY];
+    uint16_t offset = 0;
+    
+    // Create . entry (points to root inode)
+    DirectoryEntry *dot_entry = (DirectoryEntry *)(root_data_block + offset);
+    dot_entry->inode_number = INODE_START; // Root inode
+    dot_entry->name_length = 1;
+    dot_entry->name[0] = '.';
+    dot_entry->name[1] = '\0';
+    dot_entry->record_length = sizeof(DirectoryEntry) + 2; // 2 bytes for "." + null terminator
+    offset += dot_entry->record_length;
+    
+    // Create .. entry (also points to root inode since root is its own parent)
+    DirectoryEntry *dotdot_entry = (DirectoryEntry *)(root_data_block + offset);
+    dotdot_entry->inode_number = INODE_START;
+    dotdot_entry->name_length = 2;
+    dotdot_entry->name[0] = '.';
+    dotdot_entry->name[1] = '.';
+    dotdot_entry->name[2] = '\0';
+    dotdot_entry->record_length = sizeof(DirectoryEntry) + 3; // 3 bytes for ".." + null terminator
+    
+    // Update root inode file_size to reflect the directory entries
+    Inode *root_inode = (Inode *)HARD_DISK[INODE_START];
+    root_inode->file_size = dot_entry->record_length + dotdot_entry->record_length;
 }
 
-int find_free_data_block()
-{
-    // TODO: Implement bitmap-based data block allocation
-    // This should check the data bitmap (block FREE_BITMAP) to find a free data block
-    // Return the block number of a free data block, or 0 if none available
-    return 0;
-}
-
-int find_free_inode()
-{
-    // TODO: Implement bitmap-based inode allocation
-    // This should check the inode bitmap (block FREE_BITMAP) to find a free inode
-    // Return the inode number of a free inode, or 0 if none available
-    return 0;
-}
+// find_free_data_block() and find_free_inode() are now implemented in utils.c
 
 // should not be called by itself, already called in create_directory()
 void init_inode(uint16_t inode_number)
@@ -163,22 +106,64 @@ void init_inode(uint16_t inode_number)
     free(in);
 }
 
-void create_directory(const char *dirname)
+// Creates a new directory with given name in current working directory
+// Returns inode number of created directory, or 0 on error
+uint16_t create_directory(const char *dirname)
 {
-    DirectoryEntry *dir = malloc(sizeof(DirectoryEntry));
-    dir->inode_number = find_free_inode(); // find free inode
-    dir->entries_length = 0;
-    dir->path = malloc(strlen(session_config->current_working_dir) + strlen(dirname) + 2);//2 for / and \0 null terminator
-    if(snprintf(dir->path, MAX_PATH_LENGTH-1, "%s/%s", session_config->current_working_dir, dirname) > MAX_PATH_LENGTH)//size check
-        printf("MAX_PATH_LENGTH exceeded\n");
-    memcpy(session_config->current_working_dir, dir->path, strlen(dir->path) + 1); //update current working dir as well
-    dir->entries = NULL;                                           // No entries initially
-    //change inode status to in use in bitmap
-    //initialize DirectoryEntry for . (this directory) and .. (parent directory)
+    // Validate input
+    if (dirname == NULL || strlen(dirname) == 0 || strlen(dirname) > MAX_FILENAME) {
+        return 0;
+    }
+    
+    // Find free inode for new directory
+    uint16_t new_inode_num = find_free_inode();
+    if (new_inode_num == 0) {
+        return 0; // No free inodes
+    }
+    
+    // Initialize the directory's inode
+    init_inode(new_inode_num);
+    
+    // Get the directory's data block
+    Inode *dir_inode = (Inode *)(HARD_DISK[INODE_START + (new_inode_num / 32)] + (new_inode_num % 32) * sizeof(Inode));
+    uint16_t dir_data_block = dir_inode->directBlocks[0];
+    uint8_t *dir_data = HARD_DISK[dir_data_block];
+    uint16_t offset = 0;
+    
+    // Create . entry (points to this directory's inode)
+    DirectoryEntry *dot_entry = (DirectoryEntry *)(dir_data + offset);
+    dot_entry->inode_number = new_inode_num;
+    dot_entry->name_length = 1;
+    dot_entry->name[0] = '.';
+    dot_entry->name[1] = '\0';
+    dot_entry->record_length = sizeof(DirectoryEntry) + 2;
+    offset += dot_entry->record_length;
+    
+    // Create .. entry (points to parent directory's inode)
+    // TODO: Get parent directory's inode number from current working directory
+    // For now, assuming parent is root (INODE_START)
+    DirectoryEntry *dotdot_entry = (DirectoryEntry *)(dir_data + offset);
+    dotdot_entry->inode_number = INODE_START; // TODO: Get actual parent inode
+    dotdot_entry->name_length = 2;
+    dotdot_entry->name[0] = '.';
+    dotdot_entry->name[1] = '.';
+    dotdot_entry->name[2] = '\0';
+    dotdot_entry->record_length = sizeof(DirectoryEntry) + 3;
+    offset += dotdot_entry->record_length;
+    
+    // Update directory inode file_size
+    dir_inode->file_size = offset;
+    
+    // TODO: Add entry to parent directory's data block
+    // This requires reading parent directory, finding space, adding entry
+    
+    return new_inode_num;
 }
 
 int rmdir(const char *dirname)
 {
+    // TODO: Implement directory removal
+    return SUCCESS;
 }
 
 void delete_directory_helper(const char *dirname)
@@ -289,6 +274,8 @@ int create_file(const char *filename)
 
 int delete_file(const char *filename)
 {
+    // TODO: Implement file deletion
+    return SUCCESS;
 }
 
 typedef enum
@@ -297,7 +284,7 @@ typedef enum
 } Operation;
 
 // assuming /foo/bar is pathname and op is O_RDONLY
-int open(const char *pathname, Operation op)
+int fs_open(const char *pathname, Operation op)
 {
     // root directory is / in pathname
     // start at root, then so read in inode, inode block 1 which is block INODE_START 2
@@ -305,20 +292,26 @@ int open(const char *pathname, Operation op)
     // then starts to traverse entries to find entry.name==foo, from there get the entry inode and do recursion for bar
     // after finding bar, read in its inode, check bar.permissions if operation is allowed, probably bit operation like r & op == 1
     // allocate file descriptor for process in File Descriptor Table, return to user file descriptor pointer
+    // TODO: Implement file opening
+    return -1; // Return file descriptor or error
 }
 
-int close(int file_descriptor)
+int fs_close(int file_descriptor)
 {
     // deallocate file descriptor
+    // TODO: Implement file closing
+    return SUCCESS;
 }
 
-int read(int file_descriptor)
+int fs_read(int file_descriptor)
 {
     // read first data block of file, consult inode
     // update last accessed time in inode
+    // TODO: Implement file reading
+    return SUCCESS;
 }
 
-int write(int file_descriptor)
+int fs_write(int file_descriptor)
 {
     // may allocate a block
     // each write generates 5 I/Os
@@ -327,7 +320,7 @@ int write(int file_descriptor)
 file logically generates five I/Os: one to read the data bitmap (which is
 then updated to mark the newly-allocated block as used), one to write the
 bitmap (to reflect its new state to disk), two more to read and then write
-the inode (which is updated with the new block’s location), and finally
+the inode (which is updated with the new block's location), and finally
 one to write the actual block itself.
 The amount of write traffic is even worse when one considers a simple and common operation such as file creation. To create a file, the file
 system must not only allocate an inode, but also allocate space within
@@ -345,6 +338,8 @@ and update the data bitmap, and then finally the write of the data itself.
 How can a file system accomplish any of this with reasonable efficiency?
 
     */
+    // TODO: Implement file writing
+    return SUCCESS;
 }
 
 // creating the free bit map/array
@@ -397,8 +392,7 @@ int main()
     // reset_HARD_DISK fills hard disk with 0s
     reset_hard_disk();
 
-    DirectoryEntry *rootDirectory;
-    rootDirectory = create_root_directory();
+    create_root_directory();
     Inode rootInode;
     memcpy(&rootInode, HARD_DISK[INODE_START], sizeof(Inode));
     printf("Printing Root Inode:\n");
@@ -406,12 +400,18 @@ int main()
     printf("\tStarting Block: %d\n", rootInode.directBlocks[0]);
     printf("\tPermissions: %o\n", rootInode.permissions);
     printf("\tOwner/User ID: %d\n", rootInode.ownerID);
-    printf("Printing Root Directory:\n");
-    // printf("\tEntries: %s", rootDirectory->entries[0]); save this for later
-    printf("\tInode Number Block: %d\n", rootDirectory->inode_number);
-    printf("\tLength: %d\n", rootDirectory->entries_length);
-    printf("\tPath: %s\n", rootDirectory->path);
-    create_directory("home");
-    printf("Current Working Directory: %s\n", session_config->current_working_dir);
+    printf("\tFile Size: %u bytes\n", rootInode.file_size);
+    printf("Printing Root Directory Data Block:\n");
+    DirectoryEntry *entry = (DirectoryEntry *)HARD_DISK[ROOT_DIRECTORY];
+    printf("\tEntry 1 - Inode: %d, Name: %.*s\n", entry->inode_number, entry->name_length, entry->name);
+    entry = (DirectoryEntry *)((uint8_t *)entry + entry->record_length);
+    printf("\tEntry 2 - Inode: %d, Name: %.*s\n", entry->inode_number, entry->name_length, entry->name);
+    
+    uint16_t home_inode = create_directory("home");
+    if (home_inode != 0) {
+        printf("Created directory 'home' with inode: %d\n", home_inode);
+    } else {
+        printf("Failed to create directory 'home'\n");
+    }
     return 0;
 }
