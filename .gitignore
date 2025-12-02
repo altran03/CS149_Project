@@ -1,0 +1,9 @@
+# Compiled binaries and executables
+*.out
+*.exe
+*.bin
+src/filesystem
+src/test_run
+src/a.out
+a.out
+
