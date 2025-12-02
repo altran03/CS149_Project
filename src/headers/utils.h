@@ -6,10 +6,22 @@
 #include <string.h>
 #include <sys/types.h>
 #include <stdint.h>
+#include "common.h"
 
-extern uint8_t inode_bitmap[2048]; // 2048 bytes = 16384 bits for inode allocation tracking
-// Function declarations
-uint16_t find_free_inode();
-void set_bit(uint8_t *bitmap, uint16_t index);
+// Bitmap manipulation functions
 int is_bit_set(uint8_t *bitmap, uint16_t index);
+void set_bit(uint8_t *bitmap, uint16_t index);
+void clear_bit(uint8_t *bitmap, uint16_t index);
+
+// Bitmap access functions (bitmap stored in HARD_DISK[FREE_BITMAP])
+uint8_t* get_inode_bitmap();
+uint8_t* get_data_bitmap();
+
+// Allocation functions
+uint16_t find_free_inode();
+uint16_t find_free_data_block();
+
+// Deallocation functions
+void free_inode(uint16_t inode_number);
+void free_data_block(uint16_t block_number);
 #endif

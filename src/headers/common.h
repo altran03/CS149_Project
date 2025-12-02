@@ -14,6 +14,8 @@
 #include <errno.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <time.h>
 
 #define MAX_PATH_LENGTH 1024
 #define MAX_FILENAME 256
@@ -27,9 +29,10 @@
 
 typedef struct
 {
+    uint16_t uid; // current user id
     char current_working_dir[MAX_PATH_LENGTH];
-    int show_hidden_files;
-    int verbose_mode;
+    bool show_hidden_files;
+    bool verbose_mode;
 } SessionConfig;
 
 // HARD DISK
@@ -50,34 +53,36 @@ typedef struct
 { // The Inode stores metadata about a file or directory
 
     uint16_t ownerID;
-    uint16_t permissions;
-    uint32_t file_size;        // in bytes
-    uint16_t directBlocks[16]; // this can be reduced for more metadata options
-    uint16_t indirect;
-    uint16_t second_level_indirect;
-    uint32_t time;  // last accessed
-    uint32_t ctime; // creation time
-    uint32_t mtime; // last modified
-    uint32_t dtime; // file deletion time
+    uint16_t permissions;           // 0000000rwxrwxrwx, owner, group, other/world
+    uint32_t file_size;             // in bytes
+    uint16_t directBlocks[6];       // this can be reduced for more metadata options
+    uint16_t indirect;              // 0 means uninitialized
+    uint16_t second_level_indirect; // 0 means uninitialized
+    time_t time;    // last accessed
+    time_t ctime;   // creation time
+    time_t mtime;   // last modified
+    time_t dtime;   // file deletion time
     uint32_t flags; // 1 regular file, 2 directory, 4 indirect block, 8 second_level_indirect block, etc.
 
 } Inode;
 static_assert(sizeof(Inode) == 64, "Inode must be 64 bytes in size");
-typedef struct
-{
-    char *path;               // full path of directory
-    uint16_t inode_number;    // inode of directory
-    uint8_t length;           // number of entries
-    DirectoryEntry **entries; // pointer to array of pointers, because DirectoryEntries not contiguous
-} Directory;
-static_assert(sizeof(Directory) == 24, "Directory must be 24 bytes in size");
-typedef struct
-{
-    char filename[MAX_FILENAME];
-    uint16_t record_length; // length of this directory entry record
-    uint8_t name_length;    // length of the filename
-    uint16_t inode_index;   // index of the inode in the inode table
-} DirectoryEntry;
-static_assert(sizeof(DirectoryEntry) == 263, "DirectoryEntry must be 263 bytes in size");
+// DirectoryEntry structure - represents a single entry in a directory
+// On disk: directories are just sequences of DirectoryEntry structures
+// In memory: directories are arrays/lists of DirectoryEntry - no Directory wrapper needed
+// Note: Flexible array member - actual size varies based on name_length
+struct DirectoryEntry {
+    uint16_t inode_number;  // inode number of the file/directory
+    uint16_t record_length; // total size of this entry (allows variable-length names)
+    uint8_t name_length;    // length of the name (not including null terminator)
+    char name[];            // flexible array: variable-length name, null-terminated
+};
+typedef struct DirectoryEntry DirectoryEntry;
+
+// File structure for file metadata in memory
+typedef struct {
+    uint16_t inode_number;
+    uint32_t file_size;
+    char *path;
+} File;
 
 #endif

@@ -9,7 +9,7 @@
 #include <pwd.h>
 #include <grp.h>
 #include <errno.h>
-#include <common.h>
+#include "headers/common.h"
 
 /*
 16 bits is enough for number of blocks 2^16=65536>16384, each block is 2KiB
