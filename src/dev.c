@@ -112,12 +112,14 @@ uint16_t create_directory(const char *dirname)
 {
     // Validate input
     if (dirname == NULL || strlen(dirname) == 0 || strlen(dirname) > MAX_FILENAME) {
+        printf("INVALID dirname: %s\n", dirname);
         return 0;
     }
     
     // Find free inode for new directory
     uint16_t new_inode_num = find_free_inode();
     if (new_inode_num == 0) {
+        printf("No free Inodes\n");
         return 0; // No free inodes
     }
     
@@ -143,7 +145,7 @@ uint16_t create_directory(const char *dirname)
     // TODO: Get parent directory's inode number from current working directory
     // For now, assuming parent is root (INODE_START)
     DirectoryEntry *dotdot_entry = (DirectoryEntry *)(dir_data + offset);
-    dotdot_entry->inode_number = INODE_START; // TODO: Get actual parent inode
+    dotdot_entry->inode_number = session_config->current_working_dir.inode; // TODO: Get actual parent inode
     dotdot_entry->name_length = 2;
     dotdot_entry->name[0] = '.';
     dotdot_entry->name[1] = '.';
@@ -278,14 +280,16 @@ int delete_file(const char *filename)
     return SUCCESS;
 }
 
-typedef enum
-{
-    O_RDONLY // read only
-} Operation;
-
 // assuming /foo/bar is pathname and op is O_RDONLY
-int fs_open(const char *pathname, Operation op)
+int fs_open(const char *pathname, uint16_t operation)
 {
+    char* dirEntry;
+    //split pathname by /
+    dirEntry = strtok(pathname, s);
+    //iterate through array (DirectoryEntry names)
+        //iterate through names.entries until find next array element
+    //once at last do things
+
     // root directory is / in pathname
     // start at root, then so read in inode, inode block 1 which is block INODE_START 2
     // inside the inode should have pointers to data blocks, first is ROOT_DIRECTORY 514, but can have more
@@ -413,5 +417,10 @@ int main()
     } else {
         printf("Failed to create directory 'home'\n");
     }
+    DirectoryEntry *homeDir = (DirectoryEntry *)HARD_DISK[home_inode.directBlocks[0]];
+    printf("\tEntry 1 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
+    entry = (DirectoryEntry *)((uint8_t *)entry + homeDir->record_length);
+    printf("\tEntry 2 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
+    printf()
     return 0;
 }

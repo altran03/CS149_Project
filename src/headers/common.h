@@ -86,4 +86,11 @@ typedef struct {
     char *path;
 } File;
 
+typedef struct {
+    uint16_t inode_number;
+    uint16_t offset; //in bytes for block, max should be 2048
+    uint16_t flags; //file operation that will be compared with inode permissions
+    uint8_t referenceCount; //number of concurrent references, 128 max can be increased if necessary
+} FileDescriptor;
+
 #endif
