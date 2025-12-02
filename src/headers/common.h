@@ -47,7 +47,7 @@ typedef struct
 #define INODE_END 514
 #define ROOT_DIRECTORY 515
 #define KERNEL_MEMORY_START 516 //stores FileDescriptors
-#define KERNEL_MEMORY_END 532
+#define KERNEL_MEMORY_END 532 //there are at most 4096 FileDescriptors so 12 < 16 bits
 #define DATA_START 533 // start of data
 #define DATA_END 16384 // last block
 

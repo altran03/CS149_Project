@@ -307,14 +307,14 @@ int fs_open(const char *pathname, uint16_t operation)
     return -1; // Return file descriptor or error
 }
 
-int fs_close(int file_descriptor)
+int fs_close(uint16_t file_descriptor)
 {
     // deallocate file descriptor
     // TODO: Implement file closing
     return SUCCESS;
 }
 
-int fs_read(int file_descriptor)
+int fs_read(uint16_t file_descriptor)
 {
     // read first data block of file, consult inode
     // update last accessed time in inode
@@ -322,7 +322,7 @@ int fs_read(int file_descriptor)
     return SUCCESS;
 }
 
-int fs_write(int file_descriptor)
+int fs_write(uint16_t file_descriptor)
 {
     // may allocate a block
     // each write generates 5 I/Os
