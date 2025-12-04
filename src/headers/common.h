@@ -48,7 +48,7 @@ typedef struct
 #define INODE_END 515
 #define ROOT_DIRECTORY 516
 #define KERNEL_MEMORY_START 517 //stores FileDescriptors
-#define KERNEL_MEMORY_END 533 //there are at most 4096 FileDescriptors so 12 < 16 bits
+#define KERNEL_MEMORY_END 533 //there are at most 2048 FileDescriptors in these 16 blocks
 #define DATA_START 534 // start of data
 #define DATA_END 16384 // last block
 
@@ -80,20 +80,20 @@ struct DirectoryEntry_Struct;
 typedef struct DirectoryEntry_Struct {
     uint16_t inode_number; //inode of entry
     uint8_t record_length; //total bytes for name + leftover space
-    uint8_t str_length; //total bytes/char for name
+    uint8_t name_length; //total bytes/char for name
     uint8_t entries_length; //number of entries, once again for file is 0
     struct DirectoryEntry_Struct **entries; //for file is 0
     char *path; //pointer for path
     char name[]; //flexible array for name string, at most 256 char considering str_length
 }DirectoryEntry;
 
-//8 bytes
+//16 bytes
 typedef struct {
     uint16_t inode_number;
-    uint16_t offset; //in bytes for block, max should be 2048
     uint16_t flags; //file operation that will be compared with inode permissions
-    uint16_t referenceCount; //number of concurrent references, 128 max can be increased if necessary
+    uint32_t referenceCount; //number of concurrent references, 2^32 = 4.29.. Billion max
+    uint64_t offset; //in bytes for file, max should be 2^25, the whole system addressing space in case very large file, go up to 64
 } FileDescriptor;
-static_assert(sizeof(FileDescriptor) == 8, "FileDescriptor must be 64 bytes in size");
+static_assert(sizeof(FileDescriptor) == 16, "FileDescriptor must be 16 bytes in size");
 
 #endif

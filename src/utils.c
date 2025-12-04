@@ -22,9 +22,9 @@
 #define INODE_OFFSET 1                                                                  // Often inode 0 is reserved
 #define INODE_BITMAP_SIZE (MAX_INODES / 8)                                              // 2048 bytes - uses entire block 1
 #define INODES_PER_BLOCK BLOCK_SIZE_BYTES / sizeof(Inode)                               // 512
-#define FD_PER_BLOCK BLOCK_SIZE_BYTES / sizeof(FileDescriptor)                               // 512
+#define FD_PER_BLOCK BLOCK_SIZE_BYTES / sizeof(FileDescriptor)                               // 128
 
-#define MAX_FILEDESCRIPTOR 4096
+#define MAX_FILEDESCRIPTOR 2048
 // External reference to hard disk (defined in dev.c)
 extern uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES];
 
@@ -178,4 +178,28 @@ void fd_number_to_disk_location(uint16_t fd, uint16_t result[2])
     result[1] = byte_offset;
 
     return;
+}
+
+//return created fd if created else 0
+uint16_t is_fd_created(FileDescriptor* file_descriptor) {
+    uint8_t *kernel_bitmap = get_kernel_bitmap();
+    // Start from first non-reserved file_descriptor
+    for (uint16_t index = 1; index < MAX_FILEDESCRIPTOR; index++)
+    {
+        //file descriptor allocated at index
+        if (is_bit_set(kernel_bitmap, index))
+        {
+            uint16_t res[2];
+            fd_number_to_disk_location(index, res);
+            FileDescriptor *fd_pointer = (FileDescriptor *)malloc(sizeof(FileDescriptor *));
+            memcpy(fd_pointer, HARD_DISK[res[0]]+res[1], sizeof(fd_pointer));
+            //check if it is the file descriptor for same file/inode
+            if(file_descriptor->inode_number == fd_pointer->inode_number) {
+                free(fd_pointer);
+                return index;
+            }
+            free(fd_pointer);
+        }
+    }
+    return 0; // 0 indicates file_descriptor was not found/created
 }

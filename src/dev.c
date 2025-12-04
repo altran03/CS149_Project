@@ -18,6 +18,10 @@ SessionConfig *session_config;
 // 16 bits is enough for number of blocks 2^16=65536>16384, each block is 2KiB
 uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES];
 
+//PROTOTYPES
+uint16_t fs_open(const char *pathname, uint16_t operation);
+int fs_close(uint16_t file_descriptor);
+
 int init_inodes(const char *filename)
 {
     // TODO: Implement inode initialization from file
@@ -145,7 +149,20 @@ uint16_t create_directory(const char *dirname)
     // TODO: Get parent directory's inode number from current working directory
     // For now, assuming parent is root (INODE_START)
     DirectoryEntry *dotdot_entry = (DirectoryEntry *)(dir_data + offset);
-    dotdot_entry->inode_number = session_config->current_working_dir.inode; // TODO: Get actual parent inode
+
+    //get parent inode, first open current working dir and get file_descriptor
+    uint16_t cwd_fd = fs_open(session_config->current_working_dir, 420); 
+    uint16_t result[2];
+    //get the disk location of the fd, store in result
+    fd_number_to_disk_location(cwd_fd, result);
+    //copy from hard disk to cwd_file_descriptor
+    FileDescriptor *cwd_file_descriptor;
+    memcpy(cwd_file_descriptor, HARD_DISK[result[0]]+result[1], sizeof(FileDescriptor));
+    //set current working directory inode as parent inode
+    dotdot_entry->inode_number = cwd_file_descriptor->inode_number;
+    //close file descriptor after done using
+    fs_close(cwd_fd);
+
     dotdot_entry->name_length = 2;
     dotdot_entry->name[0] = '.';
     dotdot_entry->name[1] = '.';
@@ -231,13 +248,12 @@ int create_file(const char *filename)
     init_file_inode(free_inode);
 
     // Create File struct (similar to Directory)
-    File *file = malloc(sizeof(File));
+    DirectoryEntry *file = malloc(sizeof(DirectoryEntry));
     if (file == NULL)
     {
         return ERROR_INVALID_INPUT; // Memory allocation failed
     }
     file->inode_number = free_inode;
-    file->file_size = 0;
 
     // Allocate and set the path
     size_t path_len = strlen(session_config->current_working_dir) + strlen(filename) + 2; // 2 for / and \0
@@ -281,8 +297,10 @@ int delete_file(const char *filename)
 }
 
 // assuming /foo/bar is pathname and op is O_RDONLY
-uint16_t fs_open(const char *pathname, uint16_t operation)
+uint16_t fs_open(const char *const_pathname, uint16_t operation)
 {
+    char* pathname;
+    strcpy(pathname, const_pathname);
     char* dirEntry;
     // root directory is / in pathname
     // start at root, then so read in inode, inode block 1 which is block INODE_START 2
@@ -291,7 +309,7 @@ uint16_t fs_open(const char *pathname, uint16_t operation)
     DirectoryEntry *curEntry = (DirectoryEntry *)HARD_DISK[ROOT_DIRECTORY];
 
     //split pathname by /
-    dirEntry = strtok(pathname, '/'); 
+    dirEntry = strtok(pathname, "/"); 
 
     while(dirEntry != NULL) {
         //iterate through names.entries until find next entry that matches path
@@ -313,7 +331,7 @@ uint16_t fs_open(const char *pathname, uint16_t operation)
             printf("Pathname not found!, full_path: %s, missing: %s", pathname, dirEntry);
             return -1;
         }
-        dirEntry = strtok(NULL, '/');
+        dirEntry = strtok(NULL, "/");
     }
  
     Inode in;
@@ -322,26 +340,36 @@ uint16_t fs_open(const char *pathname, uint16_t operation)
     inode_number_to_disk_location(curEntry->inode_number, inode_place);
     memcpy(&in, HARD_DISK[inode_place[0]] + inode_place[1], sizeof(Inode));
 
-    //check bar.permissions if operation is allowed, probably bit operation like r & op == 1
-    if (operation and in.permissions are good) { // NOT DONE 
+    FileDescriptor *fd;
+    fd = (FileDescriptor *)malloc(sizeof(FileDescriptor *));
+    fd->inode_number = curEntry->inode_number;
+    //0 means not found/created, so if body is for created already
+    uint16_t fd_num = is_fd_created(fd);
+    uint16_t result[2];
+    if (fd_num != 0) {
+        //read from hard disk
+        fd_number_to_disk_location(fd_num, result);
+        memcpy(fd, HARD_DISK[result[0]] + result[1], sizeof(FileDescriptor));
+        //increment reference count
+        fd->referenceCount++;
+        free(fd);
+        return fd_num;
+    }
+    //check bar.permissions if operation is allowed, operation should not change with &
+    else if (operation & in.permissions == operation) {  
         //create FileDescriptor and return
-        FileDescriptor fd;
-        fd = (FileDescriptor)malloc(sizeof(FileDescriptor));
-        fd.inode_number = curEntry->inode_number;
-        fd.offset = 0; //start at 0 for read/write, can later change for append
-        fd.referenceCount = 1;
+        fd->offset = 0; //start at 0 for read/write, can later change for append
+        fd->referenceCount = 1;
 
         //allocate to hard disk
-        uint16_t fd_num = find_free_file_descriptor();
-        uint16_t result[2];
+        fd_num = find_free_file_descriptor();
         fd_number_to_disk_location(fd_num, result);
         memcpy(HARD_DISK[result[0]] + result[1], fd, sizeof(FileDescriptor));
+        free(fd);
         return fd_num;
     }
     // allocate file descriptor for process in File Descriptor Table, return to user file descriptor index
 
-    // TODO: Implement file opening NOT DONE
-    
     return 0; // Return file descriptor or error
 }
 
@@ -349,6 +377,10 @@ int fs_close(uint16_t file_descriptor)
 {
     // deallocate file descriptor
     // TODO: Implement file closing
+    uint16_t result[2];
+    fd_number_to_disk_location(file_descriptor, result);
+    memset(HARD_DISK[result[0]] + result[1], 0, sizeof(FileDescriptor));
+       
     return SUCCESS;
 }
 
@@ -456,16 +488,30 @@ int main()
     entry = (DirectoryEntry *)((uint8_t *)entry + entry->record_length);
     printf("\tEntry 2 - Inode: %d, Name: %.*s\n", entry->inode_number, entry->name_length, entry->name);
     
-    uint16_t home_inode = create_directory("home");
-    if (home_inode != 0) {
-        printf("Created directory 'home' with inode: %d\n", home_inode);
+    uint16_t home_inode_num = create_directory("home");
+    if (home_inode_num != 0) {
+        printf("Created directory 'home' with inode: %d\n", home_inode_num);
     } else {
         printf("Failed to create directory 'home'\n");
     }
-    DirectoryEntry *homeDir = (DirectoryEntry *)HARD_DISK[home_inode.directBlocks[0]];
+    Inode *home_inode;
+    uint16_t home_inode_res[2];
+    inode_number_to_disk_location(home_inode_num, home_inode_res);
+    memcpy(home_inode, HARD_DISK[home_inode_res[0]]+home_inode_res[1], sizeof(home_inode));
+
+    DirectoryEntry *homeDir = (DirectoryEntry *)HARD_DISK[home_inode->directBlocks[0]];
     printf("\tEntry 1 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
     entry = (DirectoryEntry *)((uint8_t *)entry + homeDir->record_length);
     printf("\tEntry 2 - Inode: %d, Name: %.*s\n", homeDir->inode_number, homeDir->name_length, homeDir->name);
-    printf()
+    uint16_t home_fd = ("/home", 420);
+    uint16_t result[2];
+    fd_number_to_disk_location(home_fd, result);
+    FileDescriptor *home_file_descriptor;
+    memcpy(home_file_descriptor, HARD_DISK[result[0]]+result[1], sizeof(FileDescriptor));
+    printf("Printing Home File Descriptor, fd: %d", home_fd);
+    printf("\tInode Number: %d", home_file_descriptor->inode_number);
+    printf("\tFlags: %o", home_file_descriptor->flags);
+    printf("\tReference Count/Concurrent Accesses: %ld", home_file_descriptor->offset);
+
     return 0;
 }
