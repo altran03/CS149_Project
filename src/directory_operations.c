@@ -16,12 +16,6 @@
 extern SessionConfig *session_config;
 extern uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES];
 
-int init_inodes(const char *filename)
-{
-    // TODO: Implement inode initialization from file
-    return SUCCESS;
-}
-
 // should not be called by itself, already called in create_root_directory()
 void init_root_inode()
 {
@@ -163,21 +157,6 @@ uint16_t create_directory(const char *dirname)
     }
     
     return new_inode_num;
-}
-
-int rmdir(const char *dirname)
-{
-    // TODO: Implement directory removal
-    return SUCCESS;
-}
-
-void delete_directory_helper(const char *dirname)
-{
-    if (rmdir(dirname) == -1)
-    {
-        perror("rmdir");
-        exit(EXIT_FAILURE);
-    }
 }
 
 // Helper function: Get directory entry at a specific offset

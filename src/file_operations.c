@@ -73,35 +73,6 @@ uint16_t create_file(const char *filename)
     // Initialize the inode for the file
     init_file_inode(new_file_inode);
 
-    // Create File struct (similar to Directory)
-    File *file = malloc(sizeof(File));
-    if (file == NULL)
-    {
-        free_inode(new_file_inode);
-        return 0; // Memory allocation failed
-    }
-    file->inode_number = new_file_inode;
-    file->file_size = 0;
-
-    // Allocate and set the path
-    size_t path_len = strlen(session_config->current_working_dir) + strlen(filename) + 2; // 2 for / and \0
-    file->path = malloc(path_len);
-    if (file->path == NULL)
-    {
-        free(file);
-        free_inode(new_file_inode);
-        return 0; // Memory allocation failed
-    }
-
-    if (snprintf(file->path, path_len, "%s/%s", session_config->current_working_dir, filename) >= (int)path_len)
-    {
-        printf("MAX_PATH_LENGTH exceeded\n");
-        free(file->path);
-        free(file);
-        free_inode(new_file_inode);
-        return 0;
-    }
-
     // Check if file already exists in current directory
     if (find_directory_entry(session_config->current_dir_inode, filename) != 0) {
         // File already exists, clean up and return error
@@ -114,8 +85,6 @@ uint16_t create_file(const char *filename)
         if (data_block != 0) {
             free_data_block(data_block);
         }
-        free(file->path);
-        free(file);
         return 0; // File already exists
     }
 
@@ -132,23 +101,10 @@ uint16_t create_file(const char *filename)
         if (data_block != 0) {
             free_data_block(data_block);
         }
-        free(file->path);
-        free(file);
         return 0; // Return 0 on error
     }
 
-    // Note: File struct should be managed by the caller
-    // or stored in a file table, freeing it for now
-    free(file->path);
-    free(file);
-
     return new_file_inode; // Return inode number on success
-}
-
-int delete_file(const char *filename)
-{
-    // TODO: Implement file deletion
-    return SUCCESS;
 }
 
 // Helper function: Check if operation is allowed based on inode permissions
@@ -720,34 +676,9 @@ int fs_write(uint16_t file_descriptor, const void *buffer, size_t count)
     return (int)bytes_written;
 }
 
-// creating the free bit map/array
-
 // reset_HARD_DISK fills hard disk with 0s
 void reset_hard_disk()
 {
     memset(HARD_DISK, 0, sizeof(HARD_DISK));
-}
-
-// print contents of hard disk in ascii, from starting block (inclusive) to end_block (exclusive/non-inclusive)
-int print_hard_disk_ascii(int start_block, int end_block)
-{
-    if (start_block < 0 || end_block < 0 || start_block > BLOCK_NUM - 1 || end_block > BLOCK_NUM)
-    {
-        printf("Bounds of blocks should be between 0 and BLOCK_NUM, start: %d, end: %d\n", start_block, end_block);
-        return 1;
-    }
-    for (int i = start_block; i < end_block; i++)
-    {
-        for (int j = 0; j < BLOCK_SIZE_BYTES; j++)
-        {
-            // check for printable character
-            if (HARD_DISK[i][j] >= 32 && HARD_DISK[i][j] <= 126)
-                printf("%c", HARD_DISK[i][j]);
-            else
-                printf(".");
-        }
-        printf("\n");
-    }
-    return 0;
 }
 

@@ -5,13 +5,6 @@
 
 // Function declarations
 uint16_t create_file(const char *filename);
-int delete_file(const char *filename);
-int copy_file(const char *source, const char *destination);
-int move_file(const char *source, const char *destination);
-int rename_file(const char *old_name, const char *new_name);
-void display_file(const char *filename);
-int append_to_file(const char *filename, const char *content);
-int search_in_file(const char *filename, const char *pattern);
 int search_files_by_name(const char *search_path, const char *pattern, char results[][MAX_PATH_LENGTH], int max_results);
 
 // File system operations
