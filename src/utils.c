@@ -22,7 +22,7 @@
 #define INODE_OFFSET 1 // Often inode 0 is reserved
 #define INODE_BITMAP_SIZE (MAX_INODES / 8) // 2048 bytes - uses entire block 1
 
-// External reference to hard disk (defined in dev.c)
+// External reference to hard disk (defined in file_operations.c)
 extern uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES];
 
 int is_bit_set(uint8_t *bitmap, uint16_t index)

@@ -7,9 +7,11 @@
 
 // Function declarations
 // Note: create_directory returns uint16_t (inode number) or 0 on error
-// implementation is in dev.c
 uint16_t create_directory(const char *dirname);
-int delete_directory(const char *dirname);
-int change_directory(const char *dirname, SessionConfig *config);
-void list_directory_contents(const char *dirname, const SessionConfig *config);
+int rmdir(const char *dirname);
+void delete_directory_helper(const char *dirname);
+void create_root_directory(void);
+void init_root_inode(void);
+void init_inode(uint16_t inode_number);
+int init_inodes(const char *filename);
 #endif

@@ -4,7 +4,7 @@
 #include "common.h"
 
 // Function declarations
-int create_file(const char *filename);
+uint16_t create_file(const char *filename);
 int delete_file(const char *filename);
 int copy_file(const char *source, const char *destination);
 int move_file(const char *source, const char *destination);

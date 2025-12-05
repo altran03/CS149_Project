@@ -7,7 +7,7 @@
 #include "headers/directory_operations.h"
 #include "headers/utils.h"
 
-// External references to globals defined in dev.c
+// External references to globals defined in file_operations.c
 extern SessionConfig *session_config;
 extern uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES];
 
@@ -149,11 +149,11 @@ int interactive_shell()
                 printf("Usage: create <file_name>\n");
                 continue;
             }
-            result = create_file(arg1);
-            if (result == SUCCESS) {
-                printf("Created file '%s'\n", arg1);
+            uint16_t file_inode = create_file(arg1);
+            if (file_inode != 0) {
+                printf("Created file '%s' (inode: %d)\n", arg1, file_inode);
             } else {
-                printf("Failed to create file '%s' (error: %d)\n", arg1, result);
+                printf("Failed to create file '%s'\n", arg1);
             }
             
         } else if (strcmp(command, "ls") == 0) {
