@@ -7,25 +7,21 @@
 #include "headers/directory_operations.h"
 #include "headers/utils.h"
 
-// External references to globals defined in file_operations.c
 extern SessionConfig *session_config;
 extern uint8_t HARD_DISK[BLOCK_NUM][BLOCK_SIZE_BYTES];
 
 // Helper function: List directory contents
 void list_directory(uint16_t dir_inode)
 {
-    // Get the directory's inode
     uint16_t inode_block = INODE_START + (dir_inode / 32);
     uint16_t inode_offset = (dir_inode % 32) * sizeof(Inode);
     Inode *dir_inode_ptr = (Inode *)(HARD_DISK[inode_block] + inode_offset);
     
-    // Check if it's actually a directory
     if ((dir_inode_ptr->flags & 2) == 0) {
         printf("Error: Not a directory\n");
         return;
     }
     
-    // Get the directory's first data block
     uint16_t dir_data_block = dir_inode_ptr->directBlocks[0];
     if (dir_data_block == 0) {
         printf("(empty directory)\n");
@@ -37,22 +33,18 @@ void list_directory(uint16_t dir_inode)
     uint16_t offset = 0;
     int count = 0;
     
-    // Iterate through directory entries
     while (offset < dir_size) {
         DirectoryEntry *entry = get_directory_entry_at_offset(dir_data, offset);
         
-        // Skip . and .. entries
         if (entry->name_length > 0 && 
             !(entry->name_length == 1 && entry->name[0] == '.') &&
             !(entry->name_length == 2 && entry->name[0] == '.' && entry->name[1] == '.')) {
             
-            // Get entry's inode to check type
             uint16_t entry_inode = entry->inode_number;
             uint16_t entry_inode_block = INODE_START + (entry_inode / 32);
             uint16_t entry_inode_offset = (entry_inode % 32) * sizeof(Inode);
             Inode *entry_inode_ptr = (Inode *)(HARD_DISK[entry_inode_block] + entry_inode_offset);
             
-            // Print entry info
             if ((entry_inode_ptr->flags & 2) != 0) {
                 printf("  [DIR]  %.*s (inode: %d)\n", entry->name_length, entry->name, entry_inode);
             } else {
@@ -62,7 +54,6 @@ void list_directory(uint16_t dir_inode)
             count++;
         }
         
-        // Move to next entry
         offset = get_next_directory_entry_offset(dir_data, offset, dir_size);
     }
     
@@ -71,7 +62,6 @@ void list_directory(uint16_t dir_inode)
     }
 }
 
-// Interactive shell for file system demo
 int interactive_shell()
 {
     char input[1024];
@@ -88,25 +78,20 @@ int interactive_shell()
     printf("Type 'exit' or 'quit' to exit\n\n");
     
     while (1) {
-        // Print prompt
         printf("fs> ");
         fflush(stdout);
         
-        // Read input
         if (fgets(input, sizeof(input), stdin) == NULL) {
             printf("\n");
             break;
         }
         
-        // Remove newline
         input[strcspn(input, "\n")] = 0;
         
-        // Skip empty lines
         if (strlen(input) == 0) {
             continue;
         }
         
-        // Parse command
         int parsed = sscanf(input, "%63s %255s %255s", command, arg1, arg2);
         
         if (strcmp(command, "help") == 0 || strcmp(command, "?") == 0) {
@@ -158,7 +143,6 @@ int interactive_shell()
             
         } else if (strcmp(command, "ls") == 0) {
             if (parsed >= 2) {
-                // List specified directory
                 uint16_t target_inode;
                 result = traverse_path(arg1, &target_inode);
                 if (result == SUCCESS) {
@@ -168,7 +152,6 @@ int interactive_shell()
                     printf("Error: Cannot access '%s' (error: %d)\n", arg1, result);
                 }
             } else {
-                // List current directory
                 printf("Contents of '%s':\n", session_config->current_working_dir);
                 list_directory(session_config->current_dir_inode);
             }
@@ -181,18 +164,15 @@ int interactive_shell()
             uint16_t target_inode;
             result = traverse_path(arg1, &target_inode);
             if (result == SUCCESS) {
-                // Check if it's a directory
                 uint16_t inode_block = INODE_START + (target_inode / 32);
                 uint16_t inode_offset = (target_inode % 32) * sizeof(Inode);
                 Inode *inode = (Inode *)(HARD_DISK[inode_block] + inode_offset);
                 
                 if ((inode->flags & 2) != 0) {
                     session_config->current_dir_inode = target_inode;
-                    // Update current working directory path
                     if (arg1[0] == '/') {
                         strncpy(session_config->current_working_dir, arg1, MAX_PATH_LENGTH - 1);
                     } else {
-                        // Relative path
                         if (strcmp(session_config->current_working_dir, "/") == 0) {
                             snprintf(session_config->current_working_dir, MAX_PATH_LENGTH, "/%s", arg1);
                         } else {
@@ -250,7 +230,7 @@ int interactive_shell()
                 continue;
             }
             fd = atoi(arg1);
-            size_t bytes_to_read = 1024; // Default
+            size_t bytes_to_read = 1024;
             if (parsed >= 3) {
                 bytes_to_read = (size_t)atoi(arg2);
             }
@@ -263,7 +243,7 @@ int interactive_shell()
             
             result = fs_read(fd, read_buffer, bytes_to_read);
             if (result >= 0) {
-                read_buffer[result] = '\0'; // Null terminate
+                read_buffer[result] = '\0';
                 printf("Read %d bytes:\n", result);
                 printf("---\n%s\n---\n", read_buffer);
             } else {
@@ -278,15 +258,11 @@ int interactive_shell()
             }
             fd = atoi(arg1);
             
-            // Find the text to write (everything after "write <fd> ")
             char *text_start = input;
-            // Skip past "write "
             text_start = strchr(text_start, ' ');
             if (text_start) {
-                text_start++; // Skip space
-                // Skip past fd
+                text_start++;
                 while (*text_start && *text_start != ' ') text_start++;
-                // Skip spaces
                 while (*text_start == ' ') text_start++;
             }
             
@@ -359,7 +335,6 @@ int main()
     printf("  File System Demo\n");
     printf("========================================\n\n");
     
-    // Initialize session
     session_config = (SessionConfig *)malloc(sizeof(SessionConfig));
     session_config->uid = 0;
     strcpy(session_config->current_working_dir, "/");
@@ -375,11 +350,9 @@ int main()
     printf("  Data Blocks: %d\n", DATA_END - DATA_START + 1);
     printf("\n");
 
-    // Initialize file system
     reset_hard_disk();
     create_root_directory();
     printf("✓ Root directory created\n\n");
     
-    // Start interactive shell
     return interactive_shell();
 }
